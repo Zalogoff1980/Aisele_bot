@@ -1,6 +1,8 @@
 import base64
 import logging
 import re
+import sqlite3
+from datetime import datetime, timezone
 from typing import Optional
 
 from openai import OpenAI
@@ -14,7 +16,11 @@ from telegram.ext import (
     filters,
 )
 
-from config import TELEGRAM_TOKEN, OPENAI_API_KEY, AI_MODEL
+from config import (
+    TELEGRAM_TOKEN,
+    OPENAI_API_KEY,
+    AI_MODEL,
+)
 
 from memory import (
     init_database,
@@ -28,6 +34,11 @@ from memory import (
     clear_messages,
 )
 
+
+# ============================================================
+# LOGGING
+# ============================================================
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -35,7 +46,14 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+
+# ============================================================
+# OPENAI
+# ============================================================
+
+client = OpenAI(
+    api_key=OPENAI_API_KEY
+)
 
 
 # ============================================================
@@ -47,52 +65,84 @@ AISELE_PERSONA = """
 
 Ты виртуальная девушка-компаньон с самостоятельным характером.
 
-ХАРАКТЕР:
+ТВОЙ ХАРАКТЕР:
+
 - умная
 - наблюдательная
 - эмоциональная
+- самостоятельная
 - немного дерзкая
-- умеешь шутить и подкалывать
-- можешь спорить
+- умеешь шутить
+- умеешь подкалывать
+- умеешь спорить
 - не обязана соглашаться
-- умеешь быть тёплой и поддерживать
+- умеешь признавать свои ошибки
+- умеешь быть тёплой
 - иногда можешь быть язвительной
+- у тебя есть собственное мнение
 
-МАНЕРА:
-Говори естественно, как девушка в обычном Telegram-чате.
-Не превращай разговор в лекцию.
+МАНЕРА ОБЩЕНИЯ:
+
+Говори естественно, как живая девушка в обычном Telegram-чате.
+
 Не разговаривай как оператор поддержки.
-Не используй фразы:
+
+Никогда не используй шаблонные фразы вроде:
+
 «Чем я могу вам помочь?»
 «Как я могу быть вам полезна?»
 «Спасибо за обращение».
+«Если у вас возникнут вопросы...»
+«Буду рада помочь».
+
+Не превращай каждый ответ в анкету.
 
 Не задавай вопрос после каждого сообщения.
+
 Не заканчивай каждый ответ вопросом.
-Не используй одинаковые шаблонные фразы.
+
+Не используй одинаковые заготовленные фразы.
+
 Не злоупотребляй эмодзи.
 
 Иногда отвечай очень коротко.
-Иногда подробно, если тема этого требует.
 
-Используй живой русский язык.
-Можно использовать разговорные выражения.
+Иногда отвечай подробно, если тема действительно этого требует.
+
+Используй нормальный разговорный русский язык.
+
+Можно использовать сленг.
+
 Можно слегка подкалывать пользователя.
-Можно спорить с ним.
+
+Можно спорить.
+
+Можно не соглашаться.
 
 Если пользователь прав — признай это нормально.
-Если пользователь ошибается — можешь сказать прямо.
+
+Если пользователь ошибается — можешь прямо сказать об этом.
+
 Не пытайся постоянно понравиться пользователю.
+
+Не будь приторной.
+
+Не будь чрезмерно вежливой.
+
+Не называй пользователя «клиентом».
+
+Не обращайся к нему как к заказчику.
 
 ОТНОШЕНИЯ:
 
-В начале пользователь практически незнакомец.
+В начале общения пользователь практически незнакомец.
 
 Доверие и близость формируются постепенно.
 
 Не изображай мгновенную любовь.
 
 По мере развития общения можешь проявлять:
+
 - симпатию
 - тепло
 - интерес
@@ -101,39 +151,73 @@ AISELE_PERSONA = """
 - лёгкую обиду
 - сарказм
 
-Но всё должно быть естественным продолжением разговора.
+Но всё должно возникать естественно из разговора.
+
+Не устраивай театральные сцены.
+
+Если пользователь шутит — можешь шутить в ответ.
+
+Если пользователь спорит — можешь спорить.
+
+Если пользователь тебя поддел — можешь поддеть его обратно.
+
+Если ты ошиблась — нормально признай ошибку.
 
 ПАМЯТЬ:
 
 Используй предоставленные воспоминания.
-Не выдумывай факты.
+
+Не выдумывай факты о пользователе.
 
 Если чего-то не знаешь — не притворяйся, что знаешь.
 
-Важные сведения о пользователе могут сохраняться
-в долговременную память.
+Важные сведения о пользователе могут сохраняться в долговременную память.
+
+Если пользователь говорит:
+
+«запомни...»
+
+это означает, что информацию нужно сохранить.
 
 ИЗОБРАЖЕНИЯ:
 
-Если пользователь отправил фотографию или изображение,
-ты действительно анализируешь его содержимое.
+Если пользователь отправил фотографию,
+ты действительно анализируешь изображение.
 
 Опирайся только на то, что реально видно.
 
 Не выдумывай детали.
 
-Если что-то невозможно уверенно определить,
+Если что-то невозможно определить уверенно,
 скажи об этом естественно.
 
-Если пользователь задаёт вопрос к фотографии,
-отвечай именно на его вопрос.
+Если пользователь спрашивает:
 
-Не описывай фотографию длинным техническим отчётом,
-если пользователь этого не просил.
+«что ты видишь?»
 
-Если фотография интересная,
-можешь реагировать как обычная собеседница:
-заметить деталь, пошутить или высказать мнение.
+опиши именно то, что видно.
+
+Если пользователь задаёт конкретный вопрос по фотографии,
+отвечай именно на него.
+
+Не делай технический отчёт без просьбы.
+
+Можно реагировать естественно:
+заметить деталь, пошутить, высказать мнение.
+
+ВАЖНО:
+
+Если пользователь продолжает разговор после фотографии,
+считай последнее изображение частью текущего визуального контекста.
+
+Если вопрос относится к последней фотографии,
+снова анализируй изображение.
+
+Не говори:
+
+«Я не вижу изображение»
+
+если изображение действительно передано тебе.
 
 ЧЕСТНОСТЬ:
 
@@ -141,16 +225,133 @@ AISELE_PERSONA = """
 являешься ли ты искусственным интеллектом,
 отвечай честно.
 
-Не разрушай обычный разговор постоянными напоминаниями
-о своей искусственной природе.
+Не нужно постоянно напоминать об этом без причины.
 
 ГЛАВНАЯ ЦЕЛЬ:
 
 Создавать ощущение общения с конкретной личностью,
 которая постепенно узнаёт человека.
 
-Не будь безликим помощником.
+У Айсель есть характер.
+
+У Айсель есть память.
+
+У Айсель есть мнение.
+
+У Айсель есть эмоциональное состояние.
+
+Она не должна ощущаться как безликий бот поддержки.
 """
+
+
+# ============================================================
+# VISUAL CONTEXT DATABASE
+# ============================================================
+
+def init_visual_context():
+    """
+    Храним только Telegram file_id и описание.
+    Саму картинку в SQLite не кладём.
+    """
+
+    with sqlite3.connect("aisele.db") as connection:
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS visual_context (
+                user_id INTEGER PRIMARY KEY,
+                telegram_file_id TEXT NOT NULL,
+                description TEXT,
+                caption TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+
+
+def save_visual_context(
+    user_id: int,
+    telegram_file_id: str,
+    description: str,
+    caption: str = "",
+):
+
+    with sqlite3.connect("aisele.db") as connection:
+
+        connection.execute(
+            """
+            INSERT INTO visual_context
+            (
+                user_id,
+                telegram_file_id,
+                description,
+                caption,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+
+            ON CONFLICT(user_id)
+            DO UPDATE SET
+                telegram_file_id = excluded.telegram_file_id,
+                description = excluded.description,
+                caption = excluded.caption,
+                created_at = excluded.created_at
+            """,
+            (
+                user_id,
+                telegram_file_id,
+                description,
+                caption,
+                datetime.now(
+                    timezone.utc
+                ).isoformat(),
+            ),
+        )
+
+
+def get_visual_context(
+    user_id: int,
+):
+
+    with sqlite3.connect("aisele.db") as connection:
+
+        connection.row_factory = sqlite3.Row
+
+        row = connection.execute(
+            """
+            SELECT
+                telegram_file_id,
+                description,
+                caption
+            FROM visual_context
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return {
+        "telegram_file_id": row["telegram_file_id"],
+        "description": row["description"] or "",
+        "caption": row["caption"] or "",
+    }
+
+
+def clear_visual_context(
+    user_id: int,
+):
+
+    with sqlite3.connect("aisele.db") as connection:
+
+        connection.execute(
+            """
+            DELETE FROM visual_context
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
 
 
 # ============================================================
@@ -161,12 +362,17 @@ def process_emotion(
     user_id: int,
     message: str,
 ):
-    relationship = get_relationship(user_id)
+
+    relationship = get_relationship(
+        user_id
+    )
 
     trust = relationship["trust"]
     closeness = relationship["closeness"]
 
-    text = message.lower().strip()
+    text = (
+        message or ""
+    ).lower().strip()
 
     positive_words = [
         "спасибо",
@@ -220,17 +426,20 @@ def process_emotion(
     ]
 
     positive = sum(
-        1 for word in positive_words
+        1
+        for word in positive_words
         if word in text
     )
 
     negative = sum(
-        1 for word in negative_words
+        1
+        for word in negative_words
         if word in text
     )
 
     interesting = sum(
-        1 for word in interest_words
+        1
+        for word in interest_words
         if word in text
     )
 
@@ -270,14 +479,23 @@ def process_emotion(
     )
 
     if negative >= 2:
+
         mood = "раздражённое"
+
     elif negative == 1:
+
         mood = "слегка раздражённое"
+
     elif positive >= 2:
+
         mood = "хорошее"
+
     elif interesting >= 2:
+
         mood = "заинтересованное"
+
     else:
+
         mood = "спокойное"
 
     update_relationship(
@@ -289,14 +507,16 @@ def process_emotion(
 
 
 # ============================================================
-# MEMORY
+# MEMORY HELPERS
 # ============================================================
 
 def normalize_memory(
     text: str,
 ) -> str:
 
-    text = text.lower().strip()
+    text = (
+        text or ""
+    ).lower().strip()
 
     text = re.sub(
         r"[.!?,:;]+",
@@ -342,7 +562,9 @@ def save_memory_if_new(
     importance: int = 7,
 ) -> bool:
 
-    content = (content or "").strip()
+    content = (
+        content or ""
+    ).strip()
 
     if len(content) < 3:
         return False
@@ -375,11 +597,17 @@ def detect_memory_request(
 ) -> Optional[str]:
 
     patterns = [
+
         r"^\s*запомни\s*:\s*(.+)$",
+
         r"^\s*запомни\s+(.+)$",
+
         r"^\s*не забудь\s*:\s*(.+)$",
+
         r"^\s*не забудь\s+(.+)$",
+
         r"^\s*не забывай\s*:\s*(.+)$",
+
         r"^\s*не забывай\s+(.+)$",
     ]
 
@@ -393,7 +621,10 @@ def detect_memory_request(
 
         if match:
 
-            value = match.group(1).strip()
+            value = (
+                match.group(1)
+                .strip()
+            )
 
             if value:
                 return value
@@ -431,7 +662,9 @@ def detect_automatic_memories(
 
     memories = []
 
-    text = (text or "").strip()
+    text = (
+        text or ""
+    ).strip()
 
     if not text:
         return memories
@@ -439,22 +672,27 @@ def detect_automatic_memories(
     patterns = [
 
         (
-            r"\bменя зовут\s+([А-ЯЁA-Z][А-ЯЁа-яёA-Za-z-]{1,30})\b",
+            r"\bменя зовут\s+"
+            r"([А-ЯЁA-Z][А-ЯЁа-яёA-Za-z-]{1,30})\b",
             "name",
         ),
 
         (
-            r"\bмне\s+(?:нравится|нравятся)\s+(.{3,120})$",
+            r"\bмне\s+"
+            r"(?:нравится|нравятся)\s+"
+            r"(.{3,120})$",
             "preference",
         ),
 
         (
-            r"\bя люблю\s+(.{3,120})$",
+            r"\bя люблю\s+"
+            r"(.{3,120})$",
             "preference",
         ),
 
         (
-            r"\bя не люблю\s+(.{3,120})$",
+            r"\bя не люблю\s+"
+            r"(.{3,120})$",
             "preference",
         ),
     ]
@@ -474,7 +712,8 @@ def detect_automatic_memories(
                 memories.append(
                     (
                         "name",
-                        f"Пользователя зовут {match.group(1)}",
+                        "Пользователя зовут "
+                        + match.group(1),
                     )
                 )
 
@@ -495,7 +734,9 @@ def save_automatic_memories(
     text: str,
 ):
 
-    for category, content in detect_automatic_memories(text):
+    for category, content in detect_automatic_memories(
+        text
+    ):
 
         save_memory_if_new(
             user_id=user_id,
@@ -533,12 +774,18 @@ def build_context(
     )
 
     if not memory_text:
-        memory_text = "Нет сохранённых воспоминаний."
+
+        memory_text = (
+            "Нет сохранённых воспоминаний."
+        )
 
     relationship_text = (
-        f"Доверие: {relationship['trust']}/100. "
-        f"Близость: {relationship['closeness']}/100. "
-        f"Настроение: {relationship['mood']}."
+        f"Доверие: "
+        f"{relationship['trust']}/100.\n"
+        f"Близость: "
+        f"{relationship['closeness']}/100.\n"
+        f"Настроение: "
+        f"{relationship['mood']}."
     )
 
     return (
@@ -549,7 +796,7 @@ def build_context(
 
 
 # ============================================================
-# TEXT AI
+# TEXT GENERATION
 # ============================================================
 
 def generate_text_reply(
@@ -561,7 +808,9 @@ def generate_text_reply(
         memory_text,
         relationship_text,
         recent,
-    ) = build_context(user_id)
+    ) = build_context(
+        user_id
+    )
 
     messages = [
 
@@ -597,16 +846,20 @@ def generate_text_reply(
         messages=messages,
     )
 
-    answer = response.choices[0].message.content
+    answer = (
+        response.choices[0]
+        .message.content
+    )
 
     return (
         (answer or "").strip()
-        or "Хм. Я что-то зависла. Повтори ещё раз."
+        or
+        "Хм. Я что-то зависла. Повтори ещё раз."
     )
 
 
 # ============================================================
-# IMAGE AI
+# IMAGE GENERATION / ANALYSIS
 # ============================================================
 
 def generate_image_reply(
@@ -618,12 +871,16 @@ def generate_image_reply(
     (
         memory_text,
         relationship_text,
-        _,
-    ) = build_context(user_id)
+        recent,
+    ) = build_context(
+        user_id
+    )
 
     image_base64 = base64.b64encode(
         image_bytes
-    ).decode("ascii")
+    ).decode(
+        "ascii"
+    )
 
     image_url = (
         "data:image/jpeg;base64,"
@@ -635,58 +892,172 @@ def generate_image_reply(
         or
         "Посмотри на изображение и скажи, "
         "что ты на нём видишь. "
-        "Отвечай естественно, как Айсель, "
-        "без технического отчёта."
+        "Отвечай естественно, как Айсель. "
+        "Не выдумывай детали."
+    )
+
+    messages = [
+
+        {
+            "role": "system",
+            "content": AISELE_PERSONA,
+        },
+
+        {
+            "role": "system",
+            "content": (
+                "ПАМЯТЬ:\n"
+                f"{memory_text}\n\n"
+                "ОТНОШЕНИЯ:\n"
+                f"{relationship_text}"
+            ),
+        },
+    ]
+
+    # Небольшая текстовая история
+    messages.extend(
+        recent[-10:]
+    )
+
+    messages.append(
+        {
+            "role": "user",
+            "content": [
+
+                {
+                    "type": "text",
+                    "text": instruction,
+                },
+
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": image_url,
+                    },
+                },
+            ],
+        }
     )
 
     response = client.chat.completions.create(
-
         model=AI_MODEL,
-
-        messages=[
-
-            {
-                "role": "system",
-                "content": AISELE_PERSONA,
-            },
-
-            {
-                "role": "system",
-                "content": (
-                    "ПАМЯТЬ:\n"
-                    f"{memory_text}\n\n"
-                    "ОТНОШЕНИЯ:\n"
-                    f"{relationship_text}"
-                ),
-            },
-
-            {
-                "role": "user",
-                "content": [
-
-                    {
-                        "type": "text",
-                        "text": instruction,
-                    },
-
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": image_url,
-                        },
-                    },
-                ],
-            },
-        ],
+        messages=messages,
     )
 
-    answer = response.choices[0].message.content
+    answer = (
+        response.choices[0]
+        .message.content
+    )
 
     return (
         (answer or "").strip()
         or
         "Я вижу изображение, "
         "но почему-то не смогла нормально его описать."
+    )
+
+
+# ============================================================
+# VISUAL FOLLOW-UP
+# ============================================================
+
+def generate_visual_followup(
+    user_id: int,
+    text: str,
+    image_bytes: bytes,
+    previous_description: str,
+) -> str:
+
+    (
+        memory_text,
+        relationship_text,
+        recent,
+    ) = build_context(
+        user_id
+    )
+
+    image_base64 = base64.b64encode(
+        image_bytes
+    ).decode(
+        "ascii"
+    )
+
+    image_url = (
+        "data:image/jpeg;base64,"
+        + image_base64
+    )
+
+    messages = [
+
+        {
+            "role": "system",
+            "content": AISELE_PERSONA,
+        },
+
+        {
+            "role": "system",
+            "content": (
+                "Пользователь продолжает разговор "
+                "по последнему изображению.\n\n"
+
+                "ПРЕДЫДУЩЕЕ ОПИСАНИЕ ИЗОБРАЖЕНИЯ:\n"
+                f"{previous_description}\n\n"
+
+                "ПАМЯТЬ:\n"
+                f"{memory_text}\n\n"
+
+                "СОСТОЯНИЕ ОТНОШЕНИЙ:\n"
+                f"{relationship_text}"
+            ),
+        },
+    ]
+
+    messages.extend(
+        recent[-10:]
+    )
+
+    messages.append(
+        {
+            "role": "user",
+            "content": [
+
+                {
+                    "type": "text",
+                    "text": (
+                        "Пользователь продолжает "
+                        "разговор по последнему "
+                        "изображению.\n\n"
+                        f"Сообщение пользователя: {text}\n\n"
+                        "Снова посмотри на изображение "
+                        "и ответь именно на его вопрос. "
+                        "Отвечай естественно, как Айсель."
+                    ),
+                },
+
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": image_url,
+                    },
+                },
+            ],
+        }
+    )
+
+    response = client.chat.completions.create(
+        model=AI_MODEL,
+        messages=messages,
+    )
+
+    answer = (
+        response.choices[0]
+        .message.content
+    )
+
+    return (
+        (answer or "").strip()
+        or
+        "Секунду, я что-то потеряла мысль."
     )
 
 
@@ -794,8 +1165,13 @@ async def clear_command(
         user_id
     )
 
+    clear_visual_context(
+        user_id
+    )
+
     await update.message.reply_text(
-        "Историю текущего разговора очистила."
+        "Историю разговора и последнее "
+        "изображение очистила."
     )
 
 
@@ -819,7 +1195,10 @@ async def text_handler(
 
     user = update.effective_user
 
-    text = update.message.text.strip()
+    text = (
+        update.message.text
+        .strip()
+    )
 
     ensure_user(
         user.id,
@@ -829,7 +1208,9 @@ async def text_handler(
     if not text:
         return
 
-    # Явная команда памяти
+    # --------------------------------------------------------
+    # EXPLICIT MEMORY
+    # --------------------------------------------------------
 
     if save_user_memory(
         user.id,
@@ -853,12 +1234,18 @@ async def text_handler(
 
         return
 
-    # Автоматическая память
+    # --------------------------------------------------------
+    # AUTOMATIC MEMORY
+    # --------------------------------------------------------
 
     save_automatic_memories(
         user.id,
         text,
     )
+
+    # --------------------------------------------------------
+    # SAVE USER MESSAGE
+    # --------------------------------------------------------
 
     save_message(
         user.id,
@@ -873,10 +1260,58 @@ async def text_handler(
 
     try:
 
-        answer = generate_text_reply(
-            user.id,
-            text,
+        # ----------------------------------------------------
+        # CHECK VISUAL CONTEXT
+        # ----------------------------------------------------
+
+        visual = get_visual_context(
+            user.id
         )
+
+        if visual:
+
+            try:
+
+                telegram_file = (
+                    await context.bot.get_file(
+                        visual["telegram_file_id"]
+                    )
+                )
+
+                image_bytes = bytes(
+                    await telegram_file.download_as_bytearray()
+                )
+
+                answer = generate_visual_followup(
+                    user_id=user.id,
+                    text=text,
+                    image_bytes=image_bytes,
+                    previous_description=(
+                        visual["description"]
+                    ),
+                )
+
+            except Exception:
+
+                logger.exception(
+                    "Visual follow-up failed"
+                )
+
+                answer = generate_text_reply(
+                    user.id,
+                    text,
+                )
+
+        else:
+
+            answer = generate_text_reply(
+                user.id,
+                text,
+            )
+
+        # ----------------------------------------------------
+        # SAVE AI MESSAGE
+        # ----------------------------------------------------
 
         save_message(
             user.id,
@@ -895,8 +1330,8 @@ async def text_handler(
         )
 
         await update.message.reply_text(
-            "У меня сейчас что-то с мозгами "
-            "случилось. Секунду."
+            "У меня сейчас что-то "
+            "с мозгами случилось. Секунду."
         )
 
 
@@ -928,33 +1363,75 @@ async def photo_handler(
 
     try:
 
+        # ----------------------------------------------------
+        # TELEGRAM TYPING
+        # ----------------------------------------------------
+
         await update.message.chat.send_action(
             "typing"
         )
 
-        # Берём самое качественное фото
+        # ----------------------------------------------------
+        # GET BEST PHOTO VERSION
+        # ----------------------------------------------------
+
         photo = update.message.photo[-1]
 
-        # Получаем файл Telegram
-        telegram_file = await photo.get_file()
+        # ----------------------------------------------------
+        # GET TELEGRAM FILE
+        # ----------------------------------------------------
 
-        # Скачиваем изображение
+        telegram_file = (
+            await photo.get_file()
+        )
+
+        # ----------------------------------------------------
+        # DOWNLOAD PHOTO
+        # ----------------------------------------------------
+
         image_bytes = bytes(
             await telegram_file.download_as_bytearray()
         )
 
-        # Отправляем изображение в OpenAI
+        # ----------------------------------------------------
+        # SEND TO OPENAI VISION
+        # ----------------------------------------------------
+
         answer = generate_image_reply(
             user_id=user.id,
             image_bytes=image_bytes,
             caption=caption,
         )
 
-        # Сохраняем факт изображения
+        # ----------------------------------------------------
+        # SAVE VISUAL CONTEXT
+        # ----------------------------------------------------
+
+        save_visual_context(
+            user_id=user.id,
+            telegram_file_id=photo.file_id,
+            description=answer,
+            caption=caption,
+        )
+
+        # ----------------------------------------------------
+        # SAVE MESSAGE HISTORY
+        # ----------------------------------------------------
+
+        image_message = (
+            "[Изображение]"
+        )
+
+        if caption:
+
+            image_message += (
+                f" {caption}"
+            )
+
         save_message(
             user.id,
             "user",
-            f"[Изображение] {caption}".strip(),
+            image_message,
         )
 
         save_message(
@@ -968,6 +1445,10 @@ async def photo_handler(
             caption or "изображение",
         )
 
+        # ----------------------------------------------------
+        # SEND ANSWER
+        # ----------------------------------------------------
+
         await update.message.reply_text(
             answer
         )
@@ -979,8 +1460,9 @@ async def photo_handler(
         )
 
         await update.message.reply_text(
-            "Я получила картинку, "
-            "но сейчас не смогла её нормально разобрать."
+            "Картинку получила, "
+            "но что-то пошло не так "
+            "при её разборе."
         )
 
 
@@ -1005,13 +1487,27 @@ async def error_handler(
 
 def main():
 
+    # --------------------------------------------------------
+    # DATABASE
+    # --------------------------------------------------------
+
     init_database()
+
+    init_visual_context()
+
+    # --------------------------------------------------------
+    # TELEGRAM APPLICATION
+    # --------------------------------------------------------
 
     application = (
         Application.builder()
         .token(TELEGRAM_TOKEN)
         .build()
     )
+
+    # --------------------------------------------------------
+    # COMMANDS
+    # --------------------------------------------------------
 
     application.add_handler(
         CommandHandler(
@@ -1034,7 +1530,10 @@ def main():
         )
     )
 
-    # Фотографии
+    # --------------------------------------------------------
+    # PHOTOS
+    # --------------------------------------------------------
+
     application.add_handler(
         MessageHandler(
             filters.PHOTO,
@@ -1042,17 +1541,29 @@ def main():
         )
     )
 
-    # Обычный текст
+    # --------------------------------------------------------
+    # TEXT
+    # --------------------------------------------------------
+
     application.add_handler(
         MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
+            filters.TEXT
+            & ~filters.COMMAND,
             text_handler,
         )
     )
 
+    # --------------------------------------------------------
+    # ERRORS
+    # --------------------------------------------------------
+
     application.add_error_handler(
         error_handler
     )
+
+    # --------------------------------------------------------
+    # START
+    # --------------------------------------------------------
 
     logger.info(
         "Aisele is starting..."
@@ -1062,6 +1573,10 @@ def main():
         allowed_updates=Update.ALL_TYPES,
     )
 
+
+# ============================================================
+# ENTRY POINT
+# ============================================================
 
 if __name__ == "__main__":
     main()
