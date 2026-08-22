@@ -1,6 +1,11 @@
 import logging
 
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+)
 
 from config import TELEGRAM_TOKEN
 
@@ -11,9 +16,10 @@ from main import (
     memory_command,
     clear_command,
     text_handler,
-    voice_handler,
     photo_handler,
 )
+
+from voice import voice_handler
 
 
 logging.basicConfig(
@@ -23,21 +29,37 @@ logging.basicConfig(
 
 
 def main():
+
     init_database()
+
     init_visual_context()
 
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    application.add_handler(
-        CommandHandler("start", start_command)
+    application = (
+        Application
+        .builder()
+        .token(TELEGRAM_TOKEN)
+        .build()
     )
 
     application.add_handler(
-        CommandHandler("memory", memory_command)
+        CommandHandler(
+            "start",
+            start_command,
+        )
     )
 
     application.add_handler(
-        CommandHandler("clear", clear_command)
+        CommandHandler(
+            "memory",
+            memory_command,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "clear",
+            clear_command,
+        )
     )
 
     application.add_handler(
@@ -46,6 +68,11 @@ def main():
             photo_handler,
         )
     )
+
+    # ==========================================
+    # ГОЛОСОВЫЕ СООБЩЕНИЯ
+    # Используем новый voice.py
+    # ==========================================
 
     application.add_handler(
         MessageHandler(
@@ -61,7 +88,9 @@ def main():
         )
     )
 
-    logging.info("Aisele started")
+    logging.info(
+        "Aisele started"
+    )
 
     application.run_polling(
         drop_pending_updates=False
