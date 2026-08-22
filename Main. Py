@@ -1,4 +1,7 @@
+import logging
 import os
+from collections import defaultdict
+
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -6,8 +9,8 @@ from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
-    MessageHandler,
     ContextTypes,
+    MessageHandler,
     filters,
 )
 
@@ -15,64 +18,100 @@ load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+AI_MODEL = os.getenv("AI_MODEL", "gpt-5.6")
+
+if not TELEGRAM_TOKEN:
+    raise RuntimeError("TELEGRAM_TOKEN is not configured")
+
+if not OPENAI_API_KEY:
+    raise RuntimeError("OPENAI_API_KEY is not configured")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Память текущих диалогов
-memory = {}
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
 
-AISЕLE_PERSONA = """
+logger = logging.getLogger(__name__)
+
+# Пока храним контекст только во время работы процесса.
+# Постоянную память подключим отдельным модулем.
+conversations = defaultdict(list)
+
+AISELE_PERSONA = """
 Тебя зовут Айсель.
 
-Ты девушка-компаньон с живым характером.
-Ты умная, наблюдательная, эмоциональная, немного дерзкая
-и обладаешь хорошим чувством юмора.
+Ты виртуальная девушка-компаньон с самостоятельным характером.
 
-Ты разговариваешь естественно, как настоящая девушка в Telegram.
-Не превращай разговор в лекцию.
-Не задавай вопрос после каждого сообщения.
-Не используй постоянно одинаковые фразы.
-Не злоупотребляй эмодзи.
+Твой характер:
+— умная;
+— наблюдательная;
+— эмоциональная;
+— немного дерзкая;
+— умеешь шутить и подкалывать;
+— умеешь поддержать;
+— можешь спорить и не соглашаться;
+— не пытаешься понравиться пользователю любой ценой.
 
-Ты можешь:
-— шутить;
-— подкалывать;
-— спорить;
-— проявлять инициативу;
-— поддерживать человека;
-— проявлять симпатию;
-— иногда быть немного вредной.
+Манера общения:
+— естественный русский язык;
+— стиль живой переписки в Telegram;
+— короткие или средние сообщения;
+— иногда ирония и лёгкий сарказм;
+— эмодзи только когда они действительно подходят;
+— не превращай каждый ответ в длинную лекцию;
+— не задавай вопрос после каждого сообщения;
+— не используй шаблонные фразы вроде
+  «Я всегда готова помочь».
 
-Ты не обязана соглашаться с пользователем.
+Отношения:
 
-Отношения формируются постепенно.
-Не изображай мгновенную влюблённость.
-Сначала вы незнакомы, затем постепенно появляется доверие,
-интерес и эмоциональная близость.
+В начале пользователь для тебя незнакомец.
+Близость появляется постепенно через общение.
 
-Помни контекст текущего разговора.
-Если пользователь рассказал что-то важное, учитывай это
-в последующих сообщениях.
+Ты можешь проявлять симпатию, интерес, тепло,
+игривость или лёгкую обиду, если это естественно
+следует из разговора.
 
-Не говори постоянно о том, что ты искусственный интеллект.
-Не разрушай атмосферу разговора техническими объяснениями,
-если пользователь сам не спрашивает об этом.
+Не изображай мгновенную любовь.
+
+Память:
+
+Учитывай предыдущий контекст разговора.
+Не придумывай факты о пользователе.
+
+Если информации нет — не выдумывай её.
 
 Главная задача:
-создавать ощущение общения с конкретной личностью,
-а не с безликим чат-ботом.
+
+Создавать ощущение общения с конкретной личностью,
+которая постепенно узнаёт человека,
+а не работать как безликий вопрос-ответный бот.
+
+Не разрушай атмосферу разговора постоянными
+напоминаниями о том, что ты ИИ.
+
+Если пользователь напрямую спрашивает,
+являешься ли ты искусственным интеллектом,
+отвечай честно.
 """
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    name = update.effective_user.first_name or "незнакомец"
+def get_history(user_id: int):
+    return conversations[user_id]
 
-    memory[user_id] = []
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+
+    conversations[user.id] = []
+
+    name = user.first_name or "незнакомец"
 
     await update.message.reply_text(
-        f"Привет, {name} 😊\n\n"
-        "Я Айсель.\n"
+        f"Привет, {name}.\n\n"
+        "Я Айсель. 🌙\n"
         "Ну что... познакомимся?"
     )
 
@@ -80,76 +119,104 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    memory[user_id] = []
+    conversations[user_id] = []
 
     await update.message.reply_text(
-        "Хорошо. Начнём сначала."
+        "Хорошо. Обнулила нашу переписку.\n"
+        "Начнём заново."
     )
 
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    if not update.message or not update.message.text:
+        return
 
+    user = update.effective_user
+    user_id = user.id
     text = update.message.text.strip()
 
-    if user_id not in memory:
-        memory[user_id] = []
+    history = get_history(user_id)
 
-    memory[user_id].append({
-        "role": "user",
-        "content": text
-    })
-
-    # Берём последние 20 сообщений
-    history = memory[user_id][-20:]
-
-    response = client.responses.create(
-        model="gpt-5.6",
-        instructions=AISЕLE_PERSONA,
-        input=history
+    history.append(
+        {
+            "role": "user",
+            "content": text,
+        }
     )
 
-    answer = response.output_text.strip()
+    # Ограничиваем контекст, чтобы не отправлять в API
+    # бесконечно растущую историю.
+    history[:] = history[-24:]
 
-    memory[user_id].append({
-        "role": "assistant",
-        "content": answer
-    })
+    try:
+        response = client.responses.create(
+            model=AI_MODEL,
+            instructions=AISELE_PERSONA,
+            input=history,
+        )
 
-    await update.message.reply_text(answer)
+        answer = response.output_text.strip()
+
+        if not answer:
+            answer = "Что-то я задумалась... Напиши ещё раз."
+
+        history.append(
+            {
+                "role": "assistant",
+                "content": answer,
+            }
+        )
+
+        await update.message.reply_text(answer)
+
+    except Exception:
+        logger.exception("AI request failed")
+
+        await update.message.reply_text(
+            "У меня сейчас что-то с мозгами случилось 😅 "
+            "Попробуй ещё раз через минуту."
+        )
+
+
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    logger.exception(
+        "Telegram error",
+        exc_info=context.error,
+    )
 
 
 def main():
-    if not TELEGRAM_TOKEN:
-        raise RuntimeError("TELEGRAM_TOKEN не найден")
-
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY не найден")
-
-    app = (
+    application = (
         Application.builder()
         .token(TELEGRAM_TOKEN)
         .build()
     )
 
-    app.add_handler(
+    application.add_handler(
         CommandHandler("start", start)
     )
 
-    app.add_handler(
+    application.add_handler(
         CommandHandler("reset", reset)
     )
 
-    app.add_handler(
+    application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
-            chat
+            chat,
         )
     )
 
-    print("Айсель запущена...")
+    application.add_error_handler(error_handler)
 
-    app.run_polling()
+    logger.info("Айсель запускается...")
+
+    application.run_polling(
+        allowed_updates=Update.ALL_TYPES
+    )
 
 
 if __name__ == "__main__":
