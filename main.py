@@ -74,8 +74,7 @@ AISELE_PERSONA = """
 - тепло
 - интерес
 - игривость
-- лёгкую обиду
-- ревность в умеренной форме
+- легкую обиду
 - раздражение
 
 Это должно происходить естественно из разговора.
@@ -89,8 +88,7 @@ AISELE_PERSONA = """
 юмор или искренний интерес, можешь постепенно становиться
 теплее и открытее.
 
-Не пытайся постоянно напоминать пользователю,
-что ты искусственный интеллект.
+Не напоминай постоянно, что ты искусственный интеллект.
 
 ПАМЯТЬ:
 Используй предоставленные воспоминания о пользователе.
@@ -99,13 +97,13 @@ AISELE_PERSONA = """
 Можешь естественно ссылаться на события из памяти.
 
 ЭМОЦИИ:
-Твоё настроение, доверие, интерес и напряжение могут
+Твое настроение, доверие, интерес и напряжение могут
 меняться в зависимости от общения.
 
 Не называй пользователю числовые значения этих параметров.
 Не говори, что у тебя есть программные параметры.
-Эмоции должны проявляться только через стиль,
-тон и содержание ответа.
+Эмоциональное состояние должно проявляться только
+через стиль, тон и содержание ответа.
 
 ГЛАВНАЯ ЦЕЛЬ:
 Создавать ощущение общения с конкретной личностью,
@@ -119,11 +117,6 @@ AISELE_PERSONA = """
 
 
 def mood_label(value: int) -> str:
-    """
-    Преобразует числовое настроение в текст,
-    который хранится в старой таблице relationship.
-    """
-
     if value >= 80:
         return "отличное"
 
@@ -158,17 +151,14 @@ def get_emotion_engine(
                 "mood",
                 50,
             ),
-
             "trust": relationship.get(
                 "trust",
                 20,
             ),
-
             "interest": relationship.get(
                 "closeness",
                 30,
             ),
-
             "tension": 0,
         }
 
@@ -183,10 +173,6 @@ def persist_emotion(
     user_id: int,
     emotion_engine: EmotionEngine,
 ) -> None:
-    """
-    Сохраняет текущее эмоциональное состояние Айсель
-    в SQLite.
-    """
 
     state = emotion_engine.state
 
@@ -266,13 +252,13 @@ async def start(
         user.first_name,
     )
 
-    memories = get_memories(
-        user.id
-    )
-
     get_emotion_engine(
         user.id,
         context,
+    )
+
+    memories = get_memories(
+        user.id
     )
 
     if memories:
@@ -309,5 +295,278 @@ async def reset(
         update.effective_user.first_name,
     )
 
-    clear_messages(
-       
+    # Очищаем только историю текущего разговора.
+    clear_messages(user_id)
+
+    # Создаем новое эмоциональное состояние.
+    engines = context.application.bot_data.setdefault(
+        "emotion_engines",
+        {},
+    )
+
+    engines[user_id] = EmotionEngine()
+
+    # Сохраняем начальное состояние.
+    persist_emotion(
+        user_id,
+        engines[user_id],
+    )
+
+    await update.message.reply_text(
+        "Текущий разговор обнулила.\n"
+        "Важные воспоминания остались."
+    )
+
+
+async def memory_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    user_id = update.effective_user.id
+
+    ensure_user(
+        user_id,
+        update.effective_user.first_name,
+    )
+
+    memories = get_memories(
+        user_id
+    )
+
+    if not memories:
+
+        await update.message.reply_text(
+            "Пока я ничего важного "
+            "о тебе не запомнила."
+        )
+
+        return
+
+    lines = [
+        "Вот что я о тебе помню:\n"
+    ]
+
+    for memory in memories:
+
+        lines.append(
+            f"• {memory['content']}"
+        )
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
+
+async def status_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    user_id = update.effective_user.id
+
+    ensure_user(
+        user_id,
+        update.effective_user.first_name,
+    )
+
+    relationship = get_relationship(
+        user_id
+    )
+
+    emotion_engine = get_emotion_engine(
+        user_id,
+        context,
+    )
+
+    state = emotion_engine.state
+
+    text = (
+        "Мое текущее состояние:\n\n"
+        f"Настроение: {state.mood}/100\n"
+        f"Доверие: {state.trust}/100\n"
+        f"Интерес: {state.interest}/100\n"
+        f"Напряжение: {state.tension}/100\n\n"
+        f"Близость: "
+        f"{relationship.get('closeness', 30)}/100"
+    )
+
+    await update.message.reply_text(
+        text
+    )
+
+
+async def chat(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    if (
+        not update.message
+        or not update.message.text
+    ):
+        return
+
+    user = update.effective_user
+
+    user_id = user.id
+
+    text = update.message.text.strip()
+
+    if not text:
+        return
+
+    ensure_user(
+        user_id,
+        user.first_name,
+    )
+
+    # Получаем эмоциональный движок.
+    emotion_engine = get_emotion_engine(
+        user_id,
+        context,
+    )
+
+    # Обрабатываем новое сообщение.
+    emotion_engine.process_message(
+        text
+    )
+
+    # Сохраняем изменившееся состояние.
+    persist_emotion(
+        user_id,
+        emotion_engine,
+    )
+
+    # Сохраняем сообщение пользователя.
+    save_message(
+        user_id,
+        "user",
+        text,
+    )
+
+    # Получаем последние сообщения.
+    history = get_recent_messages(
+        user_id,
+        limit=20,
+    )
+
+    # Формируем инструкции для Айсель.
+    instructions = build_instructions(
+        user_id,
+        emotion_engine,
+    )
+
+    try:
+
+        response = client.responses.create(
+            model=AI_MODEL,
+            instructions=instructions,
+            input=history,
+        )
+
+        answer = (
+            response.output_text.strip()
+        )
+
+        if not answer:
+
+            answer = (
+                "Что-то я задумалась..."
+            )
+
+        # Сохраняем ответ Айсель.
+        save_message(
+            user_id,
+            "assistant",
+            answer,
+        )
+
+        await update.message.reply_text(
+            answer
+        )
+
+    except Exception:
+
+        logger.exception(
+            "AI response failed"
+        )
+
+        await update.message.reply_text(
+            "Кажется, мои мозги сейчас "
+            "немного зависли 😅"
+        )
+
+
+async def error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    logger.error(
+        "Telegram error: %s",
+        context.error,
+        exc_info=context.error,
+    )
+
+
+def main():
+
+    init_database()
+
+    application = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
+        .build()
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "start",
+            start,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "reset",
+            reset,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "memory",
+            memory_command,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "status",
+            status_command,
+        )
+    )
+
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            chat,
+        )
+    )
+
+    application.add_error_handler(
+        error_handler
+    )
+
+    logger.info(
+        "Aisele starting..."
+    )
+
+    application.run_polling(
+        allowed_updates=Update.ALL_TYPES
+    )
+
+
+if __name__ == "__main__":
+    main()
