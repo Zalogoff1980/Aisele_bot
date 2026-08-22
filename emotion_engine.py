@@ -2,6 +2,59 @@ from dataclasses import dataclass, asdict
 from typing import Dict, Any
 
 
+def safe_int(value, default=50):
+    """
+    Безопасно превращает значение в число.
+    Поддерживает старые текстовые значения из базы.
+    """
+
+    if isinstance(value, (int, float)):
+        return int(value)
+
+    if isinstance(value, str):
+        text = value.strip().lower()
+
+        # Старые текстовые состояния
+        text_values = {
+            "отличное": 85,
+            "отличное настроение": 85,
+            "хорошее": 70,
+            "хорошее настроение": 70,
+            "нейтральное": 50,
+            "спокойное": 50,
+            "спокойное настроение": 50,
+            "подавленное": 30,
+            "плохое": 15,
+
+            "высокое доверие": 85,
+            "заметное доверие": 70,
+            "осторожное доверие": 50,
+            "присматривается": 25,
+            "настороженность": 10,
+
+            "сильный интерес": 85,
+            "явный интерес": 70,
+            "умеренный интерес": 50,
+            "пока наблюдает": 30,
+
+            "сильное раздражение": 85,
+            "сильное напряжение": 70,
+            "заметное напряжение": 40,
+            "небольшое напряжение": 15,
+            "спокойно": 0,
+        }
+
+        if text in text_values:
+            return text_values[text]
+
+        try:
+            return int(float(text))
+        except (ValueError, TypeError):
+            return default
+
+    return default
+
+
 @dataclass
 class EmotionalState:
     mood: int = 50
@@ -22,24 +75,17 @@ class EmotionalState:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]):
         return cls(
-            mood=int(data.get("mood", 50)),
-            trust=int(data.get("trust", 20)),
-            interest=int(data.get("interest", 30)),
-            tension=int(data.get("tension", 0)),
+            mood=safe_int(data.get("mood"), 50),
+            trust=safe_int(data.get("trust"), 20),
+            interest=safe_int(data.get("interest"), 30),
+            tension=safe_int(data.get("tension"), 0),
         )
 
 
 class EmotionEngine:
-    """
-    Эмоциональное состояние Айсель.
-
-    mood      - текущее настроение
-    trust     - доверие к пользователю
-    interest  - интерес к пользователю
-    tension   - напряжение после конфликтов, давления и грубости
-    """
 
     def __init__(self, state: Dict[str, Any] | None = None):
+
         self.state = (
             EmotionalState.from_dict(state)
             if state
@@ -47,9 +93,9 @@ class EmotionEngine:
         )
 
     def process_message(self, message: str) -> EmotionalState:
+
         text = message.lower().strip()
 
-        # Позитивное и теплое общение
         positive_words = [
             "спасибо",
             "класс",
@@ -68,7 +114,6 @@ class EmotionEngine:
             "рада",
         ]
 
-        # Давление и агрессия
         negative_words = [
             "заткнись",
             "тупая",
@@ -82,7 +127,6 @@ class EmotionEngine:
             "замолчи",
         ]
 
-        # Интересные темы / желание разговаривать
         interest_words = [
             "расскажи",
             "почему",
@@ -98,39 +142,72 @@ class EmotionEngine:
             "мечта",
         ]
 
-        positive = sum(word in text for word in positive_words)
-        negative = sum(word in text for word in negative_words)
-        interesting = sum(word in text for word in interest_words)
+        positive = sum(
+            word in text
+            for word in positive_words
+        )
 
-        # Позитивное общение
+        negative = sum(
+            word in text
+            for word in negative_words
+        )
+
+        interesting = sum(
+            word in text
+            for word in interest_words
+        )
+
         if positive:
-            self.state.mood += min(positive * 2, 6)
-            self.state.trust += min(positive * 2, 5)
-            self.state.tension -= min(positive * 2, 5)
+            self.state.mood += min(
+                positive * 2,
+                6
+            )
 
-        # Интересный разговор
+            self.state.trust += min(
+                positive * 2,
+                5
+            )
+
+            self.state.tension -= min(
+                positive * 2,
+                5
+            )
+
         if interesting:
-            self.state.interest += min(interesting * 2, 6)
-            self.state.mood += min(interesting, 3)
+            self.state.interest += min(
+                interesting * 2,
+                6
+            )
 
-        # Агрессия / давление
+            self.state.mood += min(
+                interesting,
+                3
+            )
+
         if negative:
-            self.state.mood -= min(negative * 5, 15)
-            self.state.trust -= min(negative * 3, 10)
-            self.state.tension += min(negative * 8, 25)
+            self.state.mood -= min(
+                negative * 5,
+                15
+            )
 
-        # Небольшое естественное восстановление напряжения
+            self.state.trust -= min(
+                negative * 3,
+                10
+            )
+
+            self.state.tension += min(
+                negative * 8,
+                25
+            )
+
         if not negative and self.state.tension > 0:
             self.state.tension -= 1
 
         self.state.clamp()
+
         return self.state
 
     def personality_hint(self) -> str:
-        """
-        Возвращает короткую подсказку для модели,
-        чтобы эмоциональное состояние влияло на ответ.
-        """
 
         s = self.state
 
@@ -148,60 +225,85 @@ class EmotionEngine:
             "Используй это состояние естественно. "
             "Не называй пользователю числовые значения. "
             "Не говори, что у тебя есть программные параметры. "
-            "Эмоциональное состояние должно проявляться только "
-            "через стиль, тон и содержание ответа."
+            "Эмоциональное состояние должно проявляться "
+            "только через стиль, тон и содержание ответа."
         )
 
     @staticmethod
     def _mood_hint(value: int) -> str:
+
         if value >= 80:
             return "отличное"
+
         if value >= 65:
             return "хорошее"
+
         if value >= 45:
             return "спокойное"
+
         if value >= 25:
             return "подавленное"
+
         return "плохое"
 
     @staticmethod
     def _trust_hint(value: int) -> str:
+
         if value >= 80:
             return "высокое доверие"
+
         if value >= 60:
             return "заметное доверие"
+
         if value >= 40:
             return "осторожное доверие"
+
         if value >= 20:
             return "присматривается"
+
         return "настороженность"
 
     @staticmethod
     def _interest_hint(value: int) -> str:
+
         if value >= 80:
             return "сильный интерес"
+
         if value >= 60:
             return "явный интерес"
+
         if value >= 40:
             return "умеренный интерес"
+
         return "пока наблюдает"
 
     @staticmethod
     def _tension_hint(value: int) -> str:
+
         if value >= 80:
             return "сильное раздражение"
+
         if value >= 60:
             return "сильное напряжение"
+
         if value >= 30:
             return "заметное напряжение"
+
         if value > 0:
             return "небольшое напряжение"
+
         return "спокойно"
 
 
-def create_emotion_engine(state: Dict[str, Any] | None = None) -> EmotionEngine:
+def create_emotion_engine(
+    state: Dict[str, Any] | None = None
+) -> EmotionEngine:
+
     return EmotionEngine(state)
 
 
-def get_emotion_state(engine: EmotionEngine) -> Dict[str, int]:
+def get_emotion_state(
+    engine: EmotionEngine
+) -> Dict[str, int]:
+
     return engine.state.to_dict()
