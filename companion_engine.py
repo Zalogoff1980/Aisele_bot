@@ -3,14 +3,12 @@ import logging
 
 from openai import OpenAI
 
-from memory_manager import save_unique_memory
+from config import MEMORY_MODEL
 from emotion import apply_emotion
+from memory_manager import save_unique_memory
 
 
 logger = logging.getLogger(__name__)
-
-
-ANALYSIS_MODEL = "gpt-5.6"
 
 
 ANALYSIS_INSTRUCTIONS = """
@@ -18,15 +16,12 @@ ANALYSIS_INSTRUCTIONS = """
 
 Проанализируй сообщение пользователя.
 
-Нужно определить две вещи:
+Определи две вещи:
 
 1. Эмоциональную реакцию Айсель.
-2. Нужно ли сохранить какую-либо информацию
-   о пользователе в долговременную память.
+2. Нужно ли сохранить устойчивую информацию о пользователе.
 
-ЭМОЦИИ:
-
-Допустимые значения:
+Допустимые эмоции:
 
 нейтральное
 заинтересованное
@@ -35,14 +30,10 @@ ANALYSIS_INSTRUCTIONS = """
 настороженное
 обиженное
 
-Обычная реплика должна чаще всего давать
-нейтральную реакцию.
+Обычная реплика чаще всего должна быть нейтральной.
 
 Не создавай искусственную обиду.
-
-Не интерпретируй обычное несогласие как оскорбление.
-
-ПАМЯТЬ:
+Не считай обычное несогласие оскорблением.
 
 Сохраняй только устойчивые и полезные сведения:
 
@@ -57,7 +48,7 @@ ANALYSIS_INSTRUCTIONS = """
 - планы;
 - важные события;
 - значимые отношения;
-- информацию, которую пользователь явно просит запомнить.
+- информацию, которую пользователь прямо просит запомнить.
 
 Не сохраняй:
 
@@ -67,7 +58,7 @@ ANALYSIS_INSTRUCTIONS = """
 - временное настроение;
 - бессмысленную болтовню;
 - предположения;
-- информацию, которая нужна только для текущего ответа.
+- информацию только для текущего ответа.
 
 Не выдумывай факты.
 
@@ -79,7 +70,7 @@ ANALYSIS_INSTRUCTIONS = """
     {
       "category": "категория",
       "content": "краткая формулировка факта",
-      "importance": 1
+      "importance": 5
     }
   ]
 }
@@ -90,13 +81,6 @@ ANALYSIS_INSTRUCTIONS = """
   "emotion": "нейтральное",
   "memories": []
 }
-
-importance:
-
-1-3 — малозначимо
-4-6 — умеренно важно
-7-8 — важно
-9-10 — очень важно
 """
 
 
@@ -116,93 +100,73 @@ def analyze_message(
     user_message: str,
 ):
     try:
-
         response = client.responses.create(
-            model=ANALYSIS_MODEL,
+            model=MEMORY_MODEL,
             instructions=ANALYSIS_INSTRUCTIONS,
             input=user_message,
         )
 
         raw = response.output_text.strip()
-
         data = json.loads(raw)
 
         emotion = data.get(
             "emotion",
-            "нейтральное"
+            "нейтральное",
         )
 
         if emotion not in ALLOWED_EMOTIONS:
             emotion = "нейтральное"
 
-        # Обновляем эмоциональное состояние
         apply_emotion(
             user_id,
-            emotion
+            emotion,
         )
 
         memories = data.get(
             "memories",
-            []
+            [],
         )
 
-        if isinstance(memories, list):
+        saved = 0
 
+        if isinstance(memories, list):
             for item in memories:
 
-                if not isinstance(
-                    item,
-                    dict
-                ):
+                if not isinstance(item, dict):
                     continue
 
-                category = item.get(
-                    "category"
-                )
-
-                content = item.get(
-                    "content"
-                )
-
-                importance = item.get(
-                    "importance",
-                    5
-                )
+                category = item.get("category")
+                content = item.get("content")
 
                 if not category or not content:
                     continue
 
                 try:
                     importance = int(
-                        importance
+                        item.get("importance", 5)
                     )
-                except (
-                    TypeError,
-                    ValueError
-                ):
+                except (TypeError, ValueError):
                     importance = 5
 
                 importance = max(
                     1,
-                    min(10, importance)
+                    min(10, importance),
                 )
 
-                save_unique_memory(
+                if save_unique_memory(
                     user_id=user_id,
                     category=str(category),
                     content=str(content),
                     importance=importance,
-                )
+                ):
+                    saved += 1
 
         return {
             "emotion": emotion,
-            "memories_saved": len(memories)
-            if isinstance(memories, list)
-            else 0,
+            "memories_saved": saved,
         }
 
     except Exception:
-
         logger.exception(
             "Companion analysis failed"
         )
