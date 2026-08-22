@@ -378,6 +378,12 @@ def detect_memory_request(
 
 
 def save_user_memory(
+
+
+
+# ============================================================
+# BUILD AI INSTRUCTIONS
+# ============================================================
     user_id: int,
     text: str,
 ):
@@ -398,12 +404,6 @@ def save_user_memory(
     )
 
     return True
-
-
-# ============================================================
-# BUILD AI INSTRUCTIONS
-# ============================================================
-
 def build_instructions(
     user_id: int,
 ) -> str:
