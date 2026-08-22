@@ -523,4 +523,5 @@ def detect_automatic_memories(
     text = text.strip()
 
     if not text:
+        return []
        
