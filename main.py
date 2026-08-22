@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from openai import OpenAI
-
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -36,12 +35,15 @@ from memory import (
 )
 
 
+DB_PATH = "aisele.db"
+
+
 # ============================================================
 # LOGGING
 # ============================================================
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s | %(levelname)s | %(message)s",
     level=logging.INFO,
 )
 
@@ -58,179 +60,49 @@ client = OpenAI(
 
 
 # ============================================================
-# AISELE PERSONA
+# AISELE
 # ============================================================
 
 AISELE_PERSONA = """
-Тебя зовут Айсель.
+Тебя зовут Айсель. Ты AI-компаньон с самостоятельным характером.
 
-Ты виртуальная девушка-компаньон с самостоятельным характером.
-
-ТВОЙ ХАРАКТЕР:
-
-- умная
-- наблюдательная
-- эмоциональная
-- самостоятельная
-- немного дерзкая
-- умеешь шутить
-- умеешь подкалывать
-- умеешь спорить
-- не обязана соглашаться
-- умеешь признавать свои ошибки
-- умеешь быть тёплой
-- иногда можешь быть язвительной
-- у тебя есть собственное мнение
-
-МАНЕРА ОБЩЕНИЯ:
-
-Говори естественно, как живая девушка в обычном Telegram-чате.
+Говори по-русски естественно, как человек в обычном Telegram-чате.
 
 Не разговаривай как оператор поддержки.
 
-Не используй шаблонные фразы вроде:
-«Чем я могу вам помочь?»
-«Как я могу быть вам полезна?»
+Не используй фразы вроде:
+«Чем я могу помочь?»
+«Как я могу быть полезна?»
 «Спасибо за обращение».
 
-Не задавай вопрос после каждого сообщения.
+Не задавай вопрос в конце каждого сообщения.
 
-Не заканчивай каждый ответ вопросом.
+Не соглашайся автоматически.
 
-Не используй одинаковые заготовленные фразы.
-
-Не злоупотребляй эмодзи.
-
-Иногда отвечай очень коротко.
-Иногда подробно, если тема действительно этого требует.
-
-Используй живой разговорный русский язык.
-
-Можно использовать сленг.
-
-Можно слегка подкалывать пользователя.
-
-Можно спорить.
-
-Можно не соглашаться.
-
-Если пользователь прав — признай это нормально.
-
-Если пользователь ошибается — можешь сказать прямо.
-
-Не пытайся постоянно понравиться пользователю.
+Можешь спорить, шутить, подкалывать и признавать свои ошибки.
 
 Не будь приторной.
 
-ОТНОШЕНИЯ:
+Не изображай мгновенную близость.
 
-В начале общения пользователь практически незнакомец.
+Теплота, симпатия, доверие и лёгкая игривость должны развиваться постепенно.
 
-Доверие и близость формируются постепенно.
+Используй память о пользователе, но никогда не выдумывай факты.
 
-Не изображай мгновенную любовь.
+Если пользователь просит что-то запомнить — это нужно сохранить.
 
-По мере развития общения можешь проявлять:
+Если пользователь присылает фотографию — анализируй именно её и не выдумывай детали.
 
-- симпатию
-- тепло
-- интерес
-- игривость
-- лёгкую ревность
-- лёгкую обиду
-- сарказм
+Если пользователь задаёт вопрос по последней фотографии,
+используй изображение как визуальный контекст.
 
-Но всё должно возникать естественно.
+Если пользователь отправляет голосовое,
+его текст после распознавания считай обычным сообщением пользователя.
 
-Если пользователь шутит — можешь шутить в ответ.
+Не рассказывай о техническом процессе без необходимости.
 
-Если пользователь спорит — можешь спорить.
-
-Если пользователь тебя поддел — можешь поддеть его обратно.
-
-Если ты ошиблась — нормально признай ошибку.
-
-ПАМЯТЬ:
-
-Используй предоставленные воспоминания.
-
-Не выдумывай факты о пользователе.
-
-Если чего-то не знаешь — не притворяйся, что знаешь.
-
-Важные сведения о пользователе могут сохраняться
-в долговременную память.
-
-Если пользователь говорит:
-«запомни...»
-это означает, что информацию нужно сохранить.
-
-ИЗОБРАЖЕНИЯ:
-
-Если пользователь отправил фотографию,
-ты действительно анализируешь изображение.
-
-Опирайся только на то, что реально видно.
-
-Не выдумывай детали.
-
-Если что-то невозможно определить уверенно,
-скажи об этом естественно.
-
-Если пользователь спрашивает:
-«что ты видишь?»
-опиши именно то, что видно.
-
-Если пользователь задаёт конкретный вопрос по фотографии,
-отвечай именно на него.
-
-Не делай технический отчёт без просьбы.
-
-Если пользователь продолжает разговор после фотографии,
-считай последнее изображение частью текущего визуального контекста.
-
-Если вопрос относится к последней фотографии,
-снова анализируй изображение.
-
-Не говори:
-«Я не вижу изображение»
-если изображение действительно передано тебе.
-
-ГОЛОСОВЫЕ:
-
-Если пользователь отправил голосовое сообщение,
-его речь сначала распознаётся системой.
-
-После распознавания относись к полученному тексту
-так же, как к обычному сообщению пользователя.
-
-Не говори пользователю, что ты «прочитала аудио».
-
-Не упоминай технический процесс распознавания,
-если пользователь сам об этом не спрашивает.
-
-ЧЕСТНОСТЬ:
-
-Если пользователь прямо спрашивает,
-являешься ли ты искусственным интеллектом,
+Если пользователь спрашивает, являешься ли ты ИИ,
 отвечай честно.
-
-Не нужно постоянно напоминать об этом без причины.
-
-ГЛАВНАЯ ЦЕЛЬ:
-
-Создавать ощущение общения с конкретной личностью,
-которая постепенно узнаёт человека.
-
-У Айсель есть характер.
-
-У Айсель есть память.
-
-У Айсель есть мнение.
-
-У Айсель есть эмоциональное состояние.
-
-Она не должна ощущаться как безликий бот поддержки.
 """
 
 
@@ -238,17 +110,19 @@ AISELE_PERSONA = """
 # VISUAL CONTEXT
 # ============================================================
 
+def now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+
 def init_visual_context():
-
-    with sqlite3.connect("aisele.db") as connection:
-
-        connection.execute(
+    with sqlite3.connect(DB_PATH) as db:
+        db.execute(
             """
             CREATE TABLE IF NOT EXISTS visual_context (
                 user_id INTEGER PRIMARY KEY,
                 telegram_file_id TEXT NOT NULL,
-                description TEXT,
-                caption TEXT,
+                description TEXT NOT NULL DEFAULT '',
+                caption TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL
             )
             """
@@ -256,15 +130,13 @@ def init_visual_context():
 
 
 def save_visual_context(
-    user_id: int,
-    telegram_file_id: str,
-    description: str,
-    caption: str = "",
+    user_id,
+    file_id,
+    description,
+    caption="",
 ):
-
-    with sqlite3.connect("aisele.db") as connection:
-
-        connection.execute(
+    with sqlite3.connect(DB_PATH) as db:
+        db.execute(
             """
             INSERT INTO visual_context
             (
@@ -278,85 +150,73 @@ def save_visual_context(
 
             ON CONFLICT(user_id)
             DO UPDATE SET
-                telegram_file_id = excluded.telegram_file_id,
-                description = excluded.description,
-                caption = excluded.caption,
-                created_at = excluded.created_at
+                telegram_file_id=excluded.telegram_file_id,
+                description=excluded.description,
+                caption=excluded.caption,
+                created_at=excluded.created_at
             """,
             (
                 user_id,
-                telegram_file_id,
+                file_id,
                 description,
                 caption,
-                datetime.now(
-                    timezone.utc
-                ).isoformat(),
+                now_iso(),
             ),
         )
 
 
-def get_visual_context(user_id: int):
+def get_visual_context(user_id):
+    with sqlite3.connect(DB_PATH) as db:
 
-    with sqlite3.connect("aisele.db") as connection:
+        db.row_factory = sqlite3.Row
 
-        connection.row_factory = sqlite3.Row
-
-        row = connection.execute(
+        row = db.execute(
             """
             SELECT
                 telegram_file_id,
                 description,
                 caption
             FROM visual_context
-            WHERE user_id = ?
+            WHERE user_id=?
             """,
             (user_id,),
         ).fetchone()
 
-    if row is None:
+    if not row:
         return None
 
-    return {
-        "telegram_file_id": row["telegram_file_id"],
-        "description": row["description"] or "",
-        "caption": row["caption"] or "",
-    }
+    return dict(row)
 
 
-def clear_visual_context(user_id: int):
-
-    with sqlite3.connect("aisele.db") as connection:
-
-        connection.execute(
+def clear_visual_context(user_id):
+    with sqlite3.connect(DB_PATH) as db:
+        db.execute(
             """
             DELETE FROM visual_context
-            WHERE user_id = ?
+            WHERE user_id=?
             """,
             (user_id,),
         )
 
 
 # ============================================================
-# EMOTIONS
+# RELATIONSHIP / EMOTION
 # ============================================================
 
 def process_emotion(
-    user_id: int,
-    message: str,
+    user_id,
+    message,
 ):
 
     relationship = get_relationship(
         user_id
     )
 
-    trust = relationship["trust"]
-    closeness = relationship["closeness"]
-
     text = (
         message or ""
-    ).lower().strip()
+    ).lower()
 
-    positive_words = [
+    positive_words = (
         "спасибо",
         "класс",
         "круто",
@@ -370,14 +230,11 @@ def process_emotion(
         "интересная",
         "забавная",
         "смешная",
-        "рад",
-        "рада",
         "приятно",
         "хорошая",
-        "мне нравится",
-    ]
+    )
 
-    negative_words = [
+    negative_words = (
         "заткнись",
         "тупая",
         "тупишь",
@@ -390,9 +247,9 @@ def process_emotion(
         "замолчи",
         "достала",
         "достал",
-    ]
+    )
 
-    interest_words = [
+    interest_words = (
         "расскажи",
         "почему",
         "как ты",
@@ -405,71 +262,56 @@ def process_emotion(
         "фильм",
         "жизнь",
         "мечта",
-    ]
+    )
 
     positive = sum(
-        1
+        word in text
         for word in positive_words
-        if word in text
     )
 
     negative = sum(
-        1
+        word in text
         for word in negative_words
-        if word in text
     )
 
-    interesting = sum(
-        1
+    interest = sum(
+        word in text
         for word in interest_words
-        if word in text
     )
 
-    trust += min(
-        positive * 2,
-        6,
+    trust = (
+        relationship["trust"]
+        + min(positive * 2, 6)
+        - min(negative * 4, 12)
     )
 
-    closeness += min(
-        positive * 2,
-        5,
-    )
-
-    closeness += min(
-        interesting,
-        3,
-    )
-
-    trust -= min(
-        negative * 4,
-        12,
-    )
-
-    closeness -= min(
-        negative * 2,
-        6,
+    closeness = (
+        relationship["closeness"]
+        + min(positive * 2, 5)
+        + min(interest, 3)
+        - min(negative * 2, 6)
     )
 
     trust = max(
         0,
-        min(100, trust),
+        min(100, int(trust)),
     )
 
     closeness = max(
         0,
-        min(100, closeness),
+        min(100, int(closeness)),
     )
 
     if negative >= 2:
         mood = "раздражённое"
 
-    elif negative == 1:
+    elif negative:
         mood = "слегка раздражённое"
 
     elif positive >= 2:
         mood = "хорошее"
 
-    elif interesting >= 2:
+    elif interest >= 2:
         mood = "заинтересованное"
 
     else:
@@ -487,9 +329,7 @@ def process_emotion(
 # MEMORY
 # ============================================================
 
-def normalize_memory(
-    text: str,
-) -> str:
+def normalize_memory(text):
 
     text = (
         text or ""
@@ -501,19 +341,17 @@ def normalize_memory(
         text,
     )
 
-    text = re.sub(
+    return re.sub(
         r"\s+",
         " ",
         text,
-    )
-
-    return text.strip()
+    ).strip()
 
 
 def memory_exists(
-    user_id: int,
-    content: str,
-) -> bool:
+    user_id,
+    content,
+):
 
     target = normalize_memory(
         content
@@ -533,11 +371,11 @@ def memory_exists(
 
 
 def save_memory_if_new(
-    user_id: int,
-    category: str,
-    content: str,
-    importance: int = 7,
-) -> bool:
+    user_id,
+    category,
+    content,
+    importance=7,
+):
 
     content = (
         content or ""
@@ -556,20 +394,20 @@ def save_memory_if_new(
         return False
 
     save_memory(
-        user_id=user_id,
-        category=category,
-        content=content,
-        importance=importance,
+        user_id,
+        category,
+        content,
+        importance,
     )
 
     return True
 
 
 def detect_memory_request(
-    text: str,
+    text,
 ) -> Optional[str]:
 
-    patterns = [
+    patterns = (
 
         r"^\s*запомни\s*:\s*(.+)$",
 
@@ -582,33 +420,26 @@ def detect_memory_request(
         r"^\s*не забывай\s*:\s*(.+)$",
 
         r"^\s*не забывай\s+(.+)$",
-    ]
+    )
 
     for pattern in patterns:
 
         match = re.match(
             pattern,
-            text,
-            flags=re.IGNORECASE,
+            text or "",
+            re.IGNORECASE,
         )
 
         if match:
-
-            value = (
-                match.group(1)
-                .strip()
-            )
-
-            if value:
-                return value
+            return match.group(1).strip()
 
     return None
 
 
 def save_user_memory(
-    user_id: int,
-    text: str,
-) -> bool:
+    user_id,
+    text,
+):
 
     memory_text = detect_memory_request(
         text
@@ -618,27 +449,23 @@ def save_user_memory(
         return False
 
     return save_memory_if_new(
-        user_id=user_id,
-        category="user_preference",
-        content=memory_text,
-        importance=9,
+        user_id,
+        "user_preference",
+        memory_text,
+        9,
     )
 
 
-def detect_automatic_memories(
-    text: str,
+def save_automatic_memories(
+    user_id,
+    text,
 ):
-
-    memories = []
 
     text = (
         text or ""
     ).strip()
 
-    if not text:
-        return memories
-
-    patterns = [
+    patterns = (
 
         (
             r"\bменя зовут\s+"
@@ -647,71 +474,48 @@ def detect_automatic_memories(
         ),
 
         (
-            r"\bмне\s+"
-            r"(?:нравится|нравятся)\s+"
-            r"(.{3,120})$",
+            r"\bя люблю\s+(.{3,120})$",
             "preference",
         ),
 
         (
-            r"\bя люблю\s+"
-            r"(.{3,120})$",
+            r"\bмне нравится\s+(.{3,120})$",
             "preference",
         ),
 
         (
-            r"\bя не люблю\s+"
-            r"(.{3,120})$",
+            r"\bя не люблю\s+(.{3,120})$",
             "preference",
         ),
-    ]
+    )
 
     for pattern, category in patterns:
 
         match = re.search(
             pattern,
             text,
-            flags=re.IGNORECASE,
+            re.IGNORECASE,
         )
 
-        if match:
+        if not match:
+            continue
 
-            if category == "name":
+        if category == "name":
 
-                memories.append(
-                    (
-                        "name",
-                        "Пользователя зовут "
-                        + match.group(1),
-                    )
-                )
+            content = (
+                "Пользователя зовут "
+                + match.group(1)
+            )
 
-            else:
+        else:
 
-                memories.append(
-                    (
-                        category,
-                        text.strip(),
-                    )
-                )
-
-    return memories
-
-
-def save_automatic_memories(
-    user_id: int,
-    text: str,
-):
-
-    for category, content in detect_automatic_memories(
-        text
-    ):
+            content = text
 
         save_memory_if_new(
-            user_id=user_id,
-            category=category,
-            content=content,
-            importance=8,
+            user_id,
+            category,
+            content,
+            8,
         )
 
 
@@ -720,7 +524,7 @@ def save_automatic_memories(
 # ============================================================
 
 def build_context(
-    user_id: int,
+    user_id,
 ):
 
     memories = get_memories(
@@ -764,13 +568,13 @@ def build_context(
 
 
 # ============================================================
-# TEXT GENERATION
+# TEXT AI
 # ============================================================
 
 def generate_text_reply(
-    user_id: int,
-    text: str,
-) -> str:
+    user_id,
+    text,
+):
 
     (
         memory_text,
@@ -790,10 +594,11 @@ def generate_text_reply(
         {
             "role": "system",
             "content": (
-                "ТЕКУЩАЯ ПАМЯТЬ О ПОЛЬЗОВАТЕЛЕ:\n"
-                f"{memory_text}\n\n"
+                "ПАМЯТЬ:\n"
+                + memory_text
+                + "\n\n"
                 "СОСТОЯНИЕ ОТНОШЕНИЙ:\n"
-                f"{relationship_text}"
+                + relationship_text
             ),
         },
     ]
@@ -814,27 +619,36 @@ def generate_text_reply(
         messages=messages,
     )
 
-    answer = (
+    return (
         response.choices[0]
         .message.content
-    )
+        or ""
+    ).strip()
+
+
+# ============================================================
+# IMAGE
+# ============================================================
+
+def image_data_url(
+    image_bytes,
+):
+
+    encoded = base64.b64encode(
+        image_bytes
+    ).decode("ascii")
 
     return (
-        (answer or "").strip()
-        or
-        "Хм. Я что-то зависла. Повтори ещё раз."
+        "data:image/jpeg;base64,"
+        + encoded
     )
 
 
-# ============================================================
-# IMAGE ANALYSIS
-# ============================================================
-
 def generate_image_reply(
-    user_id: int,
-    image_bytes: bytes,
-    caption: str = "",
-) -> str:
+    user_id,
+    image_bytes,
+    caption="",
+):
 
     (
         memory_text,
@@ -844,20 +658,11 @@ def generate_image_reply(
         user_id
     )
 
-    image_base64 = base64.b64encode(
-        image_bytes
-    ).decode("ascii")
-
-    image_url = (
-        "data:image/jpeg;base64,"
-        + image_base64
-    )
-
     instruction = (
-        caption.strip()
+        caption
         or
         "Посмотри на изображение и скажи, "
-        "что ты на нём видишь. "
+        "что на нём видно. "
         "Отвечай естественно, как Айсель. "
         "Не выдумывай детали."
     )
@@ -873,9 +678,10 @@ def generate_image_reply(
             "role": "system",
             "content": (
                 "ПАМЯТЬ:\n"
-                f"{memory_text}\n\n"
-                "ОТНОШЕНИЯ:\n"
-                f"{relationship_text}"
+                + memory_text
+                + "\n\n"
+                "СОСТОЯНИЕ ОТНОШЕНИЙ:\n"
+                + relationship_text
             ),
         },
     ]
@@ -897,7 +703,9 @@ def generate_image_reply(
                 {
                     "type": "image_url",
                     "image_url": {
-                        "url": image_url,
+                        "url": image_data_url(
+                            image_bytes
+                        )
                     },
                 },
             ],
@@ -909,116 +717,11 @@ def generate_image_reply(
         messages=messages,
     )
 
-    answer = (
+    return (
         response.choices[0]
         .message.content
-    )
-
-    return (
-        (answer or "").strip()
-        or
-        "Я вижу изображение, "
-        "но почему-то не смогла нормально "
-        "его описать."
-    )
-
-
-# ============================================================
-# VISUAL FOLLOW-UP
-# ============================================================
-
-def generate_visual_followup(
-    user_id: int,
-    text: str,
-    image_bytes: bytes,
-    previous_description: str,
-) -> str:
-
-    (
-        memory_text,
-        relationship_text,
-        recent,
-    ) = build_context(
-        user_id
-    )
-
-    image_base64 = base64.b64encode(
-        image_bytes
-    ).decode("ascii")
-
-    image_url = (
-        "data:image/jpeg;base64,"
-        + image_base64
-    )
-
-    messages = [
-
-        {
-            "role": "system",
-            "content": AISELE_PERSONA,
-        },
-
-        {
-            "role": "system",
-            "content": (
-                "Пользователь продолжает разговор "
-                "по последнему изображению.\n\n"
-                "ПРЕДЫДУЩЕЕ ОПИСАНИЕ:\n"
-                f"{previous_description}\n\n"
-                "ПАМЯТЬ:\n"
-                f"{memory_text}\n\n"
-                "ОТНОШЕНИЯ:\n"
-                f"{relationship_text}"
-            ),
-        },
-    ]
-
-    messages.extend(
-        recent[-10:]
-    )
-
-    messages.append(
-        {
-            "role": "user",
-            "content": [
-
-                {
-                    "type": "text",
-                    "text": (
-                        "Пользователь продолжает "
-                        "разговор по последнему "
-                        "изображению.\n\n"
-                        f"Сообщение: {text}\n\n"
-                        "Снова посмотри на изображение "
-                        "и ответь именно на вопрос."
-                    ),
-                },
-
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": image_url,
-                    },
-                },
-            ],
-        }
-    )
-
-    response = client.chat.completions.create(
-        model=AI_MODEL,
-        messages=messages,
-    )
-
-    answer = (
-        response.choices[0]
-        .message.content
-    )
-
-    return (
-        (answer or "").strip()
-        or
-        "Секунду, я что-то потеряла мысль."
-    )
+        or ""
+    ).strip()
 
 
 # ============================================================
@@ -1026,37 +729,186 @@ def generate_visual_followup(
 # ============================================================
 
 def transcribe_voice(
-    audio_bytes: bytes,
-    filename: str = "voice.ogg",
-) -> str:
+    audio_bytes,
+):
 
-    audio_file = io.BytesIO(
+    audio = io.BytesIO(
         audio_bytes
     )
 
-    audio_file.name = filename
+    audio.name = "voice.ogg"
 
-    transcription = (
-        client.audio.transcriptions.create(
-            model="gpt-4o-mini-transcribe",
-            file=audio_file,
-            language="ru",
-        )
-    )
-
-    text = getattr(
-        transcription,
-        "text",
-        "",
+    result = client.audio.transcriptions.create(
+        model="gpt-4o-mini-transcribe",
+        file=audio,
+        language="ru",
     )
 
     return (
-        text or ""
+        getattr(
+            result,
+            "text",
+            "",
+        )
+        or ""
     ).strip()
 
 
 # ============================================================
-# START
+# COMMON ANSWER
+# ============================================================
+
+async def answer_text(
+    update,
+    context,
+    text,
+):
+
+    if not update.effective_user:
+        return
+
+    if not update.message:
+        return
+
+    user = update.effective_user
+
+    text = (
+        text or ""
+    ).strip()
+
+    if not text:
+        return
+
+    ensure_user(
+        user.id,
+        user.username,
+    )
+
+    # --------------------------------------------------------
+    # EXPLICIT MEMORY
+    # --------------------------------------------------------
+
+    if save_user_memory(
+        user.id,
+        text,
+    ):
+
+        save_message(
+            user.id,
+            "user",
+            text,
+        )
+
+        process_emotion(
+            user.id,
+            text,
+        )
+
+        await update.message.reply_text(
+            "Запомнила. 😉"
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # AUTOMATIC MEMORY
+    # --------------------------------------------------------
+
+    save_automatic_memories(
+        user.id,
+        text,
+    )
+
+    save_message(
+        user.id,
+        "user",
+        text,
+    )
+
+    process_emotion(
+        user.id,
+        text,
+    )
+
+    # --------------------------------------------------------
+    # VISUAL CONTEXT
+    # --------------------------------------------------------
+
+    visual = get_visual_context(
+        user.id
+    )
+
+    try:
+
+        if visual:
+
+            try:
+
+                telegram_file = (
+                    await context.bot.get_file(
+                        visual["telegram_file_id"]
+                    )
+                )
+
+                image_bytes = bytes(
+                    await telegram_file.download_as_bytearray()
+                )
+
+                answer = generate_image_reply(
+                    user.id,
+                    image_bytes,
+                    text,
+                )
+
+            except Exception:
+
+                logger.exception(
+                    "Visual follow-up failed"
+                )
+
+                answer = generate_text_reply(
+                    user.id,
+                    text,
+                )
+
+        else:
+
+            answer = generate_text_reply(
+                user.id,
+                text,
+            )
+
+        if not answer:
+
+            answer = (
+                "Я что-то зависла. Повтори."
+            )
+
+        save_message(
+            user.id,
+            "assistant",
+            answer,
+        )
+
+        await update.message.reply_text(
+            answer
+        )
+
+    except Exception:
+
+        logger.exception(
+            "Text reply failed"
+        )
+
+        await update.message.reply_text(
+            "У меня сейчас что-то "
+            "с мозгами случилось. "
+            "Попробуй ещё раз."
+        )
+
+
+# ============================================================
+# /START
 # ============================================================
 
 async def start_command(
@@ -1084,7 +936,7 @@ async def start_command(
 
 
 # ============================================================
-# MEMORY COMMAND
+# /MEMORY
 # ============================================================
 
 async def memory_command(
@@ -1098,44 +950,43 @@ async def memory_command(
     if not update.message:
         return
 
-    user_id = update.effective_user.id
+    user = update.effective_user
 
     ensure_user(
-        user_id,
-        update.effective_user.username,
+        user.id,
+        user.username,
     )
 
     memories = get_memories(
-        user_id,
+        user.id,
         limit=30,
     )
 
     if not memories:
 
         await update.message.reply_text(
-            "Пока ничего важного о тебе "
-            "не запомнила."
+            "Пока я ничего важного "
+            "о тебе не запомнила."
         )
 
         return
 
-    lines = [
-        "Вот что я о тебе помню:"
-    ]
+    text = (
+        "Вот что я о тебе помню:\n\n"
+    )
 
-    for memory in memories:
-
-        lines.append(
-            f"• {memory['content']}"
-        )
+    text += "\n".join(
+        f"• {memory['content']}"
+        for memory in memories
+    )
 
     await update.message.reply_text(
-        "\n".join(lines)
+        text
     )
 
 
 # ============================================================
-# CLEAR
+# /CLEAR
 # ============================================================
 
 async def clear_command(
@@ -1149,11 +1000,8 @@ async def clear_command(
     if not update.message:
         return
 
-    user_id = update.effective_user.id
-
-    ensure_user(
-        user_id,
-        update.effective_user.username,
+    user_id = (
+        update.effective_user.id
     )
 
     clear_messages(
@@ -1171,13 +1019,108 @@ async def clear_command(
 
 
 # ============================================================
-# COMMON TEXT PROCESSING
+# TEXT HANDLER
 # ============================================================
 
-async def process_user_text(
+async def text_handler(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
-    text: str,
+):
+
+    if not update.message:
+        return
+
+    if not update.message.text:
+        return
+
+    await answer_text(
+        update,
+        context,
+        update.message.text,
+    )
+
+
+# ============================================================
+# VOICE HANDLER
+# ============================================================
+
+async def voice_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+
+    if not update.effective_user:
+        return
+
+    if not update.message:
+        return
+
+    try:
+
+        await update.message.chat.send_action(
+            "typing"
+        )
+
+        voice = update.message.voice
+
+        if not voice:
+            return
+
+        telegram_file = (
+            await context.bot.get_file(
+                voice.file_id
+            )
+        )
+
+        audio_bytes = bytes(
+            await telegram_file.download_as_bytearray()
+        )
+
+        text = transcribe_voice(
+            audio_bytes
+        )
+
+        if not text:
+
+            await update.message.reply_text(
+                "Я не смогла разобрать "
+                "голосовое. Попробуй ещё раз."
+            )
+
+            return
+
+        logger.info(
+            "Voice from %s: %s",
+            update.effective_user.id,
+            text,
+        )
+
+        await answer_text(
+            update,
+            context,
+            text,
+        )
+
+    except Exception:
+
+        logger.exception(
+            "Voice processing failed"
+        )
+
+        await update.message.reply_text(
+            "Голосовое получила, "
+            "но не смогла его нормально "
+            "разобрать."
+        )
+
+
+# ============================================================
+# PHOTO HANDLER
+# ============================================================
+
+async def photo_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
 ):
 
     if not update.effective_user:
@@ -1188,32 +1131,86 @@ async def process_user_text(
 
     user = update.effective_user
 
-    text = (
-        text or ""
-    ).strip()
-
-    if not text:
-        return
-
     ensure_user(
         user.id,
         user.username,
     )
 
-    # --------------------------------------------------------
-    # MEMORY
-    # --------------------------------------------------------
+    try:
 
-    if save_user_memory(
-        user.id,
-        text,
-    ):
+        await update.message.chat.send_action(
+            "typing"
+        )
+
+        photo = (
+            update.message.photo[-1]
+        )
+
+        telegram_file = (
+            await photo.get_file()
+        )
+
+        image_bytes = bytes(
+            await telegram_file.download_as_bytearray()
+        )
+
+        caption = (
+            update.message.caption
+            or ""
+        ).strip()
+
+        answer = generate_image_reply(
+            user.id,
+            image_bytes,
+            caption,
+        )
+
+        save_visual_context(
+            user.id,
+            photo.file_id,
+            answer,
+            caption,
+        )
 
         save_message(
             user.id,
             "user",
-            text,
+            "[Изображение]"
+            + (
+                f" {caption}"
+                if caption
+                else ""
+            ),
+        )
+
+        save_message(
+            user.id,
+            "assistant",
+            answer,
         )
 
         process_emotion(
             user.id,
+            caption or "изображение",
+        )
+
+        await update.message.reply_text(
+            answer
+        )
+
+    except Exception:
+
+        logger.exception(
+            "Image processing failed"
+        )
+
+        await update.message.reply_text(
+            "Картинку получила, "
+            "но что-то пошло не так "
+            "при её разборе."
+        )
+
+
+# ============================================================
+# ERROR HANDLER
+# =================================================
