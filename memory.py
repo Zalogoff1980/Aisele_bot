@@ -119,7 +119,8 @@ def ensure_user(user_id, telegram_name=None):
             connection.execute(
                 """
                 UPDATE users
-                SET telegram_name = ?,
+                SET
+                    telegram_name = ?,
                     last_seen = ?
                 WHERE user_id = ?
                 """,
@@ -207,7 +208,54 @@ def save_memory(
     content,
     importance=5,
 ):
+    """
+    Сохраняет важное воспоминание.
+
+    Если точно такое воспоминание уже существует,
+    новая копия не создаётся.
+    """
+
+    content = content.strip()
+
+    if not content:
+        return False
+
+    importance = max(
+        1,
+        min(10, int(importance)),
+    )
+
     with get_connection() as connection:
+
+        existing = connection.execute(
+            """
+            SELECT id
+            FROM memories
+            WHERE user_id = ?
+              AND LOWER(TRIM(content)) = LOWER(TRIM(?))
+            LIMIT 1
+            """,
+            (
+                user_id,
+                content,
+            ),
+        ).fetchone()
+
+        if existing is not None:
+            connection.execute(
+                """
+                UPDATE memories
+                SET
+                    importance = MAX(importance, ?)
+                WHERE id = ?
+                """,
+                (
+                    importance,
+                    existing["id"],
+                ),
+            )
+
+            return False
 
         connection.execute(
             """
@@ -229,6 +277,8 @@ def save_memory(
                 now_iso(),
             ),
         )
+
+    return True
 
 
 def get_memories(
@@ -262,6 +312,47 @@ def get_memories(
         }
         for row in rows
     ]
+
+
+def delete_memory(
+    user_id,
+    content,
+):
+    """
+    Удаляет конкретное воспоминание.
+    """
+
+    with get_connection() as connection:
+
+        cursor = connection.execute(
+            """
+            DELETE FROM memories
+            WHERE user_id = ?
+              AND LOWER(TRIM(content)) = LOWER(TRIM(?))
+            """,
+            (
+                user_id,
+                content.strip(),
+            ),
+        )
+
+        return cursor.rowcount > 0
+
+
+def clear_memories(user_id):
+    """
+    Полностью очищает долговременную память пользователя.
+    """
+
+    with get_connection() as connection:
+
+        connection.execute(
+            """
+            DELETE FROM memories
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
 
 
 def get_relationship(user_id):
@@ -348,4 +439,4 @@ def update_relationship(
                 now_iso(),
                 user_id,
             ),
-        )
+    )
