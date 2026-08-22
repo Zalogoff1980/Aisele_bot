@@ -1,115 +1,108 @@
-— умеешь поддерживать.
+import logging
+
+from openai import OpenAI
+
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
+
+from config import TELEGRAM_TOKEN, OPENAI_API_KEY, AI_MODEL
+from memory import (
+    init_database,
+    ensure_user,
+    save_message,
+    get_recent_messages,
+    get_memories,
+    get_relationship,
+    clear_messages,
+)
+
+
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+
+logger = logging.getLogger(__name__)
+
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+
+AISELE_PERSONA = """
+Тебя зовут Айсель.
+
+Ты виртуальная девушка-компаньон с самостоятельным характером.
+
+ХАРАКТЕР:
+- умная
+- наблюдательная
+- эмоциональная
+- немного дерзкая
+- умеешь шутить
+- умеешь подкалывать
+- можешь спорить
+- не обязана соглашаться
+- умеешь быть теплой
+- умеешь поддерживать
 
 МАНЕРА ОБЩЕНИЯ:
-
-Говори естественно, как девушка
-в обычном Telegram-чате.
-
+Говори естественно, как девушка в обычном Telegram-чате.
 Не превращай разговор в лекцию.
-
 Не задавай вопрос после каждого сообщения.
-
 Не используй одинаковые шаблонные фразы.
-
 Не злоупотребляй эмодзи.
-
 Иногда отвечай очень коротко.
-
-Иногда подробно,
-если тема этого требует.
-
-Не будь чрезмерно вежливой
-или официальной.
+Иногда подробно, если тема этого требует.
+Не будь чрезмерно вежливой или официальной.
 
 ОТНОШЕНИЯ:
-
 В начале пользователь для тебя незнакомец.
-
 Доверие и близость формируются постепенно.
-
 Не изображай мгновенную любовь.
-
-Если отношения становятся близкими,
-можешь проявлять симпатию, тепло,
-интерес, игривость или лёгкую обиду,
-если это естественно следует
-из разговора.
+Если отношения становятся близкими, можешь проявлять симпатию,
+тепло, интерес, игривость или легкую обиду, если это естественно
+следует из разговора.
 
 ПАМЯТЬ:
-
-Используй предоставленные воспоминания
-о пользователе.
-
+Используй предоставленные воспоминания о пользователе.
 Не выдумывай факты.
-
-Если чего-то не знаешь —
-не притворяйся, что знаешь.
-
-Можешь естественно ссылаться
-на события из памяти.
+Если чего-то не знаешь — не притворяйся, что знаешь.
+Можешь естественно ссылаться на события из памяти.
 
 ГЛАВНАЯ ЦЕЛЬ:
-
-Создавать ощущение общения
-с конкретной личностью,
-которая постепенно узнаёт человека.
-
+Создавать ощущение общения с конкретной личностью,
+которая постепенно узнает человека.
 Не будь безликим помощником.
 
-Если пользователь прямо спрашивает,
-являешься ли ты искусственным интеллектом,
-отвечай честно.
-
-Не разрушай обычный разговор
-постоянными напоминаниями
+Если пользователь прямо спрашивает, являешься ли ты искусственным
+интеллектом, отвечай честно.
+Не разрушай обычный разговор постоянными напоминаниями
 о своей искусственной природе.
 """
 
 
 def build_instructions(user_id: int) -> str:
-
-    memories = get_memories(
-        user_id,
-        limit=20
-    )
-
-    relationship = get_relationship(
-        user_id
-    )
+    memories = get_memories(user_id, limit=20)
+    relationship = get_relationship(user_id)
 
     instructions = AISELE_PERSONA
 
-    instructions += (
-        "\n\nТЕКУЩЕЕ СОСТОЯНИЕ:"
-    )
-
-    instructions += (
-        f"\nНастроение: "
-        f"{relationship['mood']}"
-    )
-
-    instructions += (
-        f"\nДоверие: "
-        f"{relationship['trust']}/100"
-    )
-
-    instructions += (
-        f"\nБлизость: "
-        f"{relationship['closeness']}/100"
-    )
+    instructions += "\n\nТЕКУЩЕЕ СОСТОЯНИЕ:"
+    instructions += f"\nНастроение: {relationship['mood']}"
+    instructions += f"\nДоверие: {relationship['trust']}/100"
+    instructions += f"\nБлизость: {relationship['closeness']}/100"
 
     if memories:
-
-        instructions += (
-            "\n\nВАЖНЫЕ ВОСПОМИНАНИЯ:"
-        )
+        instructions += "\n\nВАЖНЫЕ ВОСПОМИНАНИЯ:"
 
         for memory in memories:
-
             instructions += (
-                f"\n- "
-                f"[{memory['category']}] "
-                f"{memory['content']}"
+                f"\n- [{memory['category']}] {memory['content']}"
             )
 
     return instructions
@@ -117,57 +110,44 @@ def build_instructions(user_id: int) -> str:
 
 async def start(
     update: Update,
-    context: ContextTypes.DEFAULT_TYPE
+    context: ContextTypes.DEFAULT_TYPE,
 ):
-
     user = update.effective_user
 
     ensure_user(
         user.id,
-        user.first_name
+        user.first_name,
     )
 
-    memories = get_memories(
-        user.id
-    )
+    memories = get_memories(user.id)
 
     if memories:
-
         text = (
-            f"С возвращением, "
-            f"{user.first_name or ''}.\n\n"
+            f"С возвращением, {user.first_name or ''}.\n\n"
             "Я тебя помню. 😏"
         )
-
     else:
-
         text = (
-            f"Привет, "
-            f"{user.first_name or 'незнакомец'}.\n\n"
+            f"Привет, {user.first_name or 'незнакомец'}.\n\n"
             "Я Айсель. 🌙\n"
             "Ну что... познакомимся?"
         )
 
-    await update.message.reply_text(
-        text
-    )
+    await update.message.reply_text(text)
 
 
 async def reset(
     update: Update,
-    context: ContextTypes.DEFAULT_TYPE
+    context: ContextTypes.DEFAULT_TYPE,
 ):
-
     user_id = update.effective_user.id
 
     ensure_user(
         user_id,
-        update.effective_user.first_name
+        update.effective_user.first_name,
     )
 
-    clear_messages(
-        user_id
-    )
+    clear_messages(user_id)
 
     await update.message.reply_text(
         "Текущий разговор обнулила.\n"
@@ -177,35 +157,26 @@ async def reset(
 
 async def memory_command(
     update: Update,
-    context: ContextTypes.DEFAULT_TYPE
+    context: ContextTypes.DEFAULT_TYPE,
 ):
-
     user_id = update.effective_user.id
 
     ensure_user(
         user_id,
-        update.effective_user.first_name
+        update.effective_user.first_name,
     )
 
-    memories = get_memories(
-        user_id
-    )
+    memories = get_memories(user_id)
 
     if not memories:
-
         await update.message.reply_text(
-            "Пока я ничего важного "
-            "о тебе не запомнила."
+            "Пока я ничего важного о тебе не запомнила."
         )
-
         return
 
-    lines = [
-        "Вот что я о тебе помню:\n"
-    ]
+    lines = ["Вот что я о тебе помню:\n"]
 
     for memory in memories:
-
         lines.append(
             f"• {memory['content']}"
         )
@@ -217,50 +188,36 @@ async def memory_command(
 
 async def status_command(
     update: Update,
-    context: ContextTypes.DEFAULT_TYPE
+    context: ContextTypes.DEFAULT_TYPE,
 ):
-
     user_id = update.effective_user.id
 
     ensure_user(
         user_id,
-        update.effective_user.first_name
+        update.effective_user.first_name,
     )
 
-    relationship = get_relationship(
-        user_id
-    )
+    relationship = get_relationship(user_id)
 
     text = (
-        "Моё текущее состояние:\n\n"
-        f"Настроение: "
-        f"{relationship['mood']}\n"
-        f"Доверие: "
-        f"{relationship['trust']}/100\n"
-        f"Близость: "
-        f"{relationship['closeness']}/100"
+        "Мое текущее состояние:\n\n"
+        f"Настроение: {relationship['mood']}\n"
+        f"Доверие: {relationship['trust']}/100\n"
+        f"Близость: {relationship['closeness']}/100"
     )
 
-    await update.message.reply_text(
-        text
-    )
+    await update.message.reply_text(text)
 
 
 async def chat(
     update: Update,
-    context: ContextTypes.DEFAULT_TYPE
+    context: ContextTypes.DEFAULT_TYPE,
 ):
-
-    if (
-        not update.message
-        or not update.message.text
-    ):
+    if not update.message or not update.message.text:
         return
 
     user = update.effective_user
-
     user_id = user.id
-
     text = update.message.text.strip()
 
     if not text:
@@ -268,32 +225,18 @@ async def chat(
 
     ensure_user(
         user_id,
-        user.first_name
+        user.first_name,
     )
 
     save_message(
         user_id,
         "user",
-        text
+        text,
     )
-
-    try:
-
-        analyze_message(
-            client,
-            user_id,
-            text
-        )
-
-    except Exception:
-
-        logger.exception(
-            "Companion analysis failed"
-        )
 
     history = get_recent_messages(
         user_id,
-        limit=20
+        limit=20,
     )
 
     instructions = build_instructions(
@@ -301,27 +244,21 @@ async def chat(
     )
 
     try:
-
         response = client.responses.create(
             model=AI_MODEL,
             instructions=instructions,
             input=history,
         )
 
-        answer = (
-            response.output_text.strip()
-        )
+        answer = response.output_text.strip()
 
         if not answer:
-
-            answer = (
-                "Что-то я задумалась..."
-            )
+            answer = "Что-то я задумалась..."
 
         save_message(
             user_id,
             "assistant",
-            answer
+            answer,
         )
 
         await update.message.reply_text(
@@ -329,30 +266,27 @@ async def chat(
         )
 
     except Exception:
-
         logger.exception(
             "AI response failed"
         )
 
         await update.message.reply_text(
-            "Кажется, мои мозги "
-            "сейчас немного зависли 😅"
+            "Кажется, мои мозги сейчас немного зависли 😅"
         )
 
 
 async def error_handler(
     update: object,
-    context: ContextTypes.DEFAULT_TYPE
+    context: ContextTypes.DEFAULT_TYPE,
 ):
-
-    logger.exception(
-        "Telegram error",
-        exc_info=context.error
+    logger.error(
+        "Telegram error: %s",
+        context.error,
+        exc_info=context.error,
     )
 
 
 def main():
-
     init_database()
 
     application = (
@@ -364,36 +298,35 @@ def main():
     application.add_handler(
         CommandHandler(
             "start",
-            start
+            start,
         )
     )
 
     application.add_handler(
         CommandHandler(
             "reset",
-            reset
+            reset,
         )
     )
 
     application.add_handler(
         CommandHandler(
             "memory",
-            memory_command
+            memory_command,
         )
     )
 
     application.add_handler(
         CommandHandler(
             "status",
-            status_command
+            status_command,
         )
     )
 
     application.add_handler(
         MessageHandler(
-            filters.TEXT
-            & ~filters.COMMAND,
-            chat
+            filters.TEXT & ~filters.COMMAND,
+            chat,
         )
     )
 
