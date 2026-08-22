@@ -1,4 +1,5 @@
 import base64
+import io
 import logging
 import re
 import sqlite3
@@ -87,15 +88,10 @@ AISELE_PERSONA = """
 
 Не разговаривай как оператор поддержки.
 
-Никогда не используй шаблонные фразы вроде:
-
+Не используй шаблонные фразы вроде:
 «Чем я могу вам помочь?»
 «Как я могу быть вам полезна?»
 «Спасибо за обращение».
-«Если у вас возникнут вопросы...»
-«Буду рада помочь».
-
-Не превращай каждый ответ в анкету.
 
 Не задавай вопрос после каждого сообщения.
 
@@ -106,10 +102,9 @@ AISELE_PERSONA = """
 Не злоупотребляй эмодзи.
 
 Иногда отвечай очень коротко.
+Иногда подробно, если тема действительно этого требует.
 
-Иногда отвечай подробно, если тема действительно этого требует.
-
-Используй нормальный разговорный русский язык.
+Используй живой разговорный русский язык.
 
 Можно использовать сленг.
 
@@ -121,17 +116,11 @@ AISELE_PERSONA = """
 
 Если пользователь прав — признай это нормально.
 
-Если пользователь ошибается — можешь прямо сказать об этом.
+Если пользователь ошибается — можешь сказать прямо.
 
 Не пытайся постоянно понравиться пользователю.
 
 Не будь приторной.
-
-Не будь чрезмерно вежливой.
-
-Не называй пользователя «клиентом».
-
-Не обращайся к нему как к заказчику.
 
 ОТНОШЕНИЯ:
 
@@ -151,9 +140,7 @@ AISELE_PERSONA = """
 - лёгкую обиду
 - сарказм
 
-Но всё должно возникать естественно из разговора.
-
-Не устраивай театральные сцены.
+Но всё должно возникать естественно.
 
 Если пользователь шутит — можешь шутить в ответ.
 
@@ -171,12 +158,11 @@ AISELE_PERSONA = """
 
 Если чего-то не знаешь — не притворяйся, что знаешь.
 
-Важные сведения о пользователе могут сохраняться в долговременную память.
+Важные сведения о пользователе могут сохраняться
+в долговременную память.
 
 Если пользователь говорит:
-
 «запомни...»
-
 это означает, что информацию нужно сохранить.
 
 ИЗОБРАЖЕНИЯ:
@@ -192,20 +178,13 @@ AISELE_PERSONA = """
 скажи об этом естественно.
 
 Если пользователь спрашивает:
-
 «что ты видишь?»
-
 опиши именно то, что видно.
 
 Если пользователь задаёт конкретный вопрос по фотографии,
 отвечай именно на него.
 
 Не делай технический отчёт без просьбы.
-
-Можно реагировать естественно:
-заметить деталь, пошутить, высказать мнение.
-
-ВАЖНО:
 
 Если пользователь продолжает разговор после фотографии,
 считай последнее изображение частью текущего визуального контекста.
@@ -214,10 +193,21 @@ AISELE_PERSONA = """
 снова анализируй изображение.
 
 Не говори:
-
 «Я не вижу изображение»
-
 если изображение действительно передано тебе.
+
+ГОЛОСОВЫЕ:
+
+Если пользователь отправил голосовое сообщение,
+его речь сначала распознаётся системой.
+
+После распознавания относись к полученному тексту
+так же, как к обычному сообщению пользователя.
+
+Не говори пользователю, что ты «прочитала аудио».
+
+Не упоминай технический процесс распознавания,
+если пользователь сам об этом не спрашивает.
 
 ЧЕСТНОСТЬ:
 
@@ -245,14 +235,10 @@ AISELE_PERSONA = """
 
 
 # ============================================================
-# VISUAL CONTEXT DATABASE
+# VISUAL CONTEXT
 # ============================================================
 
 def init_visual_context():
-    """
-    Храним только Telegram file_id и описание.
-    Саму картинку в SQLite не кладём.
-    """
 
     with sqlite3.connect("aisele.db") as connection:
 
@@ -309,9 +295,7 @@ def save_visual_context(
         )
 
 
-def get_visual_context(
-    user_id: int,
-):
+def get_visual_context(user_id: int):
 
     with sqlite3.connect("aisele.db") as connection:
 
@@ -339,9 +323,7 @@ def get_visual_context(
     }
 
 
-def clear_visual_context(
-    user_id: int,
-):
+def clear_visual_context(user_id: int):
 
     with sqlite3.connect("aisele.db") as connection:
 
@@ -355,7 +337,7 @@ def clear_visual_context(
 
 
 # ============================================================
-# EMOTION ENGINE
+# EMOTIONS
 # ============================================================
 
 def process_emotion(
@@ -479,23 +461,18 @@ def process_emotion(
     )
 
     if negative >= 2:
-
         mood = "раздражённое"
 
     elif negative == 1:
-
         mood = "слегка раздражённое"
 
     elif positive >= 2:
-
         mood = "хорошее"
 
     elif interesting >= 2:
-
         mood = "заинтересованное"
 
     else:
-
         mood = "спокойное"
 
     update_relationship(
@@ -507,7 +484,7 @@ def process_emotion(
 
 
 # ============================================================
-# MEMORY HELPERS
+# MEMORY
 # ============================================================
 
 def normalize_memory(
@@ -588,10 +565,6 @@ def save_memory_if_new(
     return True
 
 
-# ============================================================
-# EXPLICIT MEMORY
-# ============================================================
-
 def detect_memory_request(
     text: str,
 ) -> Optional[str]:
@@ -651,10 +624,6 @@ def save_user_memory(
         importance=9,
     )
 
-
-# ============================================================
-# AUTOMATIC MEMORY
-# ============================================================
 
 def detect_automatic_memories(
     text: str,
@@ -774,7 +743,6 @@ def build_context(
     )
 
     if not memory_text:
-
         memory_text = (
             "Нет сохранённых воспоминаний."
         )
@@ -859,7 +827,7 @@ def generate_text_reply(
 
 
 # ============================================================
-# IMAGE GENERATION / ANALYSIS
+# IMAGE ANALYSIS
 # ============================================================
 
 def generate_image_reply(
@@ -878,9 +846,7 @@ def generate_image_reply(
 
     image_base64 = base64.b64encode(
         image_bytes
-    ).decode(
-        "ascii"
-    )
+    ).decode("ascii")
 
     image_url = (
         "data:image/jpeg;base64,"
@@ -914,7 +880,6 @@ def generate_image_reply(
         },
     ]
 
-    # Небольшая текстовая история
     messages.extend(
         recent[-10:]
     )
@@ -953,7 +918,8 @@ def generate_image_reply(
         (answer or "").strip()
         or
         "Я вижу изображение, "
-        "но почему-то не смогла нормально его описать."
+        "но почему-то не смогла нормально "
+        "его описать."
     )
 
 
@@ -978,9 +944,7 @@ def generate_visual_followup(
 
     image_base64 = base64.b64encode(
         image_bytes
-    ).decode(
-        "ascii"
-    )
+    ).decode("ascii")
 
     image_url = (
         "data:image/jpeg;base64,"
@@ -999,14 +963,11 @@ def generate_visual_followup(
             "content": (
                 "Пользователь продолжает разговор "
                 "по последнему изображению.\n\n"
-
-                "ПРЕДЫДУЩЕЕ ОПИСАНИЕ ИЗОБРАЖЕНИЯ:\n"
+                "ПРЕДЫДУЩЕЕ ОПИСАНИЕ:\n"
                 f"{previous_description}\n\n"
-
                 "ПАМЯТЬ:\n"
                 f"{memory_text}\n\n"
-
-                "СОСТОЯНИЕ ОТНОШЕНИЙ:\n"
+                "ОТНОШЕНИЯ:\n"
                 f"{relationship_text}"
             ),
         },
@@ -1027,10 +988,9 @@ def generate_visual_followup(
                         "Пользователь продолжает "
                         "разговор по последнему "
                         "изображению.\n\n"
-                        f"Сообщение пользователя: {text}\n\n"
+                        f"Сообщение: {text}\n\n"
                         "Снова посмотри на изображение "
-                        "и ответь именно на его вопрос. "
-                        "Отвечай естественно, как Айсель."
+                        "и ответь именно на вопрос."
                     ),
                 },
 
@@ -1062,7 +1022,41 @@ def generate_visual_followup(
 
 
 # ============================================================
-# /START
+# VOICE TRANSCRIPTION
+# ============================================================
+
+def transcribe_voice(
+    audio_bytes: bytes,
+    filename: str = "voice.ogg",
+) -> str:
+
+    audio_file = io.BytesIO(
+        audio_bytes
+    )
+
+    audio_file.name = filename
+
+    transcription = (
+        client.audio.transcriptions.create(
+            model="gpt-4o-mini-transcribe",
+            file=audio_file,
+            language="ru",
+        )
+    )
+
+    text = getattr(
+        transcription,
+        "text",
+        "",
+    )
+
+    return (
+        text or ""
+    ).strip()
+
+
+# ============================================================
+# START
 # ============================================================
 
 async def start_command(
@@ -1090,7 +1084,7 @@ async def start_command(
 
 
 # ============================================================
-# /MEMORY
+# MEMORY COMMAND
 # ============================================================
 
 async def memory_command(
@@ -1119,7 +1113,8 @@ async def memory_command(
     if not memories:
 
         await update.message.reply_text(
-            "Пока ничего важного о тебе не запомнила."
+            "Пока ничего важного о тебе "
+            "не запомнила."
         )
 
         return
@@ -1140,7 +1135,7 @@ async def memory_command(
 
 
 # ============================================================
-# /CLEAR
+# CLEAR
 # ============================================================
 
 async def clear_command(
@@ -1176,12 +1171,13 @@ async def clear_command(
 
 
 # ============================================================
-# TEXT HANDLER
+# COMMON TEXT PROCESSING
 # ============================================================
 
-async def text_handler(
+async def process_user_text(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
+    text: str,
 ):
 
     if not update.effective_user:
@@ -1190,26 +1186,22 @@ async def text_handler(
     if not update.message:
         return
 
-    if not update.message.text:
-        return
-
     user = update.effective_user
 
     text = (
-        update.message.text
-        .strip()
-    )
+        text or ""
+    ).strip()
+
+    if not text:
+        return
 
     ensure_user(
         user.id,
         user.username,
     )
 
-    if not text:
-        return
-
     # --------------------------------------------------------
-    # EXPLICIT MEMORY
+    # MEMORY
     # --------------------------------------------------------
 
     if save_user_memory(
@@ -1225,358 +1217,3 @@ async def text_handler(
 
         process_emotion(
             user.id,
-            text,
-        )
-
-        await update.message.reply_text(
-            "Запомнила. 😉"
-        )
-
-        return
-
-    # --------------------------------------------------------
-    # AUTOMATIC MEMORY
-    # --------------------------------------------------------
-
-    save_automatic_memories(
-        user.id,
-        text,
-    )
-
-    # --------------------------------------------------------
-    # SAVE USER MESSAGE
-    # --------------------------------------------------------
-
-    save_message(
-        user.id,
-        "user",
-        text,
-    )
-
-    process_emotion(
-        user.id,
-        text,
-    )
-
-    try:
-
-        # ----------------------------------------------------
-        # CHECK VISUAL CONTEXT
-        # ----------------------------------------------------
-
-        visual = get_visual_context(
-            user.id
-        )
-
-        if visual:
-
-            try:
-
-                telegram_file = (
-                    await context.bot.get_file(
-                        visual["telegram_file_id"]
-                    )
-                )
-
-                image_bytes = bytes(
-                    await telegram_file.download_as_bytearray()
-                )
-
-                answer = generate_visual_followup(
-                    user_id=user.id,
-                    text=text,
-                    image_bytes=image_bytes,
-                    previous_description=(
-                        visual["description"]
-                    ),
-                )
-
-            except Exception:
-
-                logger.exception(
-                    "Visual follow-up failed"
-                )
-
-                answer = generate_text_reply(
-                    user.id,
-                    text,
-                )
-
-        else:
-
-            answer = generate_text_reply(
-                user.id,
-                text,
-            )
-
-        # ----------------------------------------------------
-        # SAVE AI MESSAGE
-        # ----------------------------------------------------
-
-        save_message(
-            user.id,
-            "assistant",
-            answer,
-        )
-
-        await update.message.reply_text(
-            answer
-        )
-
-    except Exception:
-
-        logger.exception(
-            "Text generation failed"
-        )
-
-        await update.message.reply_text(
-            "У меня сейчас что-то "
-            "с мозгами случилось. Секунду."
-        )
-
-
-# ============================================================
-# PHOTO HANDLER
-# ============================================================
-
-async def photo_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-
-    if not update.effective_user:
-        return
-
-    if not update.message:
-        return
-
-    user = update.effective_user
-
-    ensure_user(
-        user.id,
-        user.username,
-    )
-
-    caption = (
-        update.message.caption or ""
-    ).strip()
-
-    try:
-
-        # ----------------------------------------------------
-        # TELEGRAM TYPING
-        # ----------------------------------------------------
-
-        await update.message.chat.send_action(
-            "typing"
-        )
-
-        # ----------------------------------------------------
-        # GET BEST PHOTO VERSION
-        # ----------------------------------------------------
-
-        photo = update.message.photo[-1]
-
-        # ----------------------------------------------------
-        # GET TELEGRAM FILE
-        # ----------------------------------------------------
-
-        telegram_file = (
-            await photo.get_file()
-        )
-
-        # ----------------------------------------------------
-        # DOWNLOAD PHOTO
-        # ----------------------------------------------------
-
-        image_bytes = bytes(
-            await telegram_file.download_as_bytearray()
-        )
-
-        # ----------------------------------------------------
-        # SEND TO OPENAI VISION
-        # ----------------------------------------------------
-
-        answer = generate_image_reply(
-            user_id=user.id,
-            image_bytes=image_bytes,
-            caption=caption,
-        )
-
-        # ----------------------------------------------------
-        # SAVE VISUAL CONTEXT
-        # ----------------------------------------------------
-
-        save_visual_context(
-            user_id=user.id,
-            telegram_file_id=photo.file_id,
-            description=answer,
-            caption=caption,
-        )
-
-        # ----------------------------------------------------
-        # SAVE MESSAGE HISTORY
-        # ----------------------------------------------------
-
-        image_message = (
-            "[Изображение]"
-        )
-
-        if caption:
-
-            image_message += (
-                f" {caption}"
-            )
-
-        save_message(
-            user.id,
-            "user",
-            image_message,
-        )
-
-        save_message(
-            user.id,
-            "assistant",
-            answer,
-        )
-
-        process_emotion(
-            user.id,
-            caption or "изображение",
-        )
-
-        # ----------------------------------------------------
-        # SEND ANSWER
-        # ----------------------------------------------------
-
-        await update.message.reply_text(
-            answer
-        )
-
-    except Exception:
-
-        logger.exception(
-            "Image processing failed"
-        )
-
-        await update.message.reply_text(
-            "Картинку получила, "
-            "но что-то пошло не так "
-            "при её разборе."
-        )
-
-
-# ============================================================
-# ERROR HANDLER
-# ============================================================
-
-async def error_handler(
-    update: object,
-    context: ContextTypes.DEFAULT_TYPE,
-):
-
-    logger.exception(
-        "Unhandled exception",
-        exc_info=context.error,
-    )
-
-
-# ============================================================
-# MAIN
-# ============================================================
-
-def main():
-
-    # --------------------------------------------------------
-    # DATABASE
-    # --------------------------------------------------------
-
-    init_database()
-
-    init_visual_context()
-
-    # --------------------------------------------------------
-    # TELEGRAM APPLICATION
-    # --------------------------------------------------------
-
-    application = (
-        Application.builder()
-        .token(TELEGRAM_TOKEN)
-        .build()
-    )
-
-    # --------------------------------------------------------
-    # COMMANDS
-    # --------------------------------------------------------
-
-    application.add_handler(
-        CommandHandler(
-            "start",
-            start_command,
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "memory",
-            memory_command,
-        )
-    )
-
-    application.add_handler(
-        CommandHandler(
-            "clear",
-            clear_command,
-        )
-    )
-
-    # --------------------------------------------------------
-    # PHOTOS
-    # --------------------------------------------------------
-
-    application.add_handler(
-        MessageHandler(
-            filters.PHOTO,
-            photo_handler,
-        )
-    )
-
-    # --------------------------------------------------------
-    # TEXT
-    # --------------------------------------------------------
-
-    application.add_handler(
-        MessageHandler(
-            filters.TEXT
-            & ~filters.COMMAND,
-            text_handler,
-        )
-    )
-
-    # --------------------------------------------------------
-    # ERRORS
-    # --------------------------------------------------------
-
-    application.add_error_handler(
-        error_handler
-    )
-
-    # --------------------------------------------------------
-    # START
-    # --------------------------------------------------------
-
-    logger.info(
-        "Aisele is starting..."
-    )
-
-    application.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-    )
-
-
-# ============================================================
-# ENTRY POINT
-# ============================================================
-
-if __name__ == "__main__":
-    main()
