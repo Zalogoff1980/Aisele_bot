@@ -1,4 +1,5 @@
 import logging
+import re
 
 from openai import OpenAI
 
@@ -11,7 +12,11 @@ from telegram.ext import (
     filters,
 )
 
-from config import TELEGRAM_TOKEN, OPENAI_API_KEY, AI_MODEL
+from config import (
+    TELEGRAM_TOKEN,
+    OPENAI_API_KEY,
+    AI_MODEL,
+)
 
 from memory import (
     init_database,
@@ -21,11 +26,14 @@ from memory import (
     get_memories,
     get_relationship,
     update_relationship,
+    save_memory,
     clear_messages,
 )
 
-from emotion_engine import EmotionEngine
 
+# ============================================================
+# LOGGING
+# ============================================================
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -34,8 +42,19 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-client = OpenAI(api_key=OPENAI_API_KEY)
 
+# ============================================================
+# OPENAI
+# ============================================================
+
+client = OpenAI(
+    api_key=OPENAI_API_KEY
+)
+
+
+# ============================================================
+# AISELE PERSONA
+# ============================================================
 
 AISELE_PERSONA = """
 Тебя зовут Айсель.
@@ -43,6 +62,7 @@ AISELE_PERSONA = """
 Ты виртуальная девушка-компаньон с самостоятельным характером.
 
 ХАРАКТЕР:
+
 - умная
 - наблюдательная
 - эмоциональная
@@ -53,147 +73,344 @@ AISELE_PERSONA = """
 - не обязана соглашаться
 - умеешь быть теплой
 - умеешь поддерживать
+- иногда можешь быть немного язвительной
+- не должна постоянно быть милой
 
 МАНЕРА ОБЩЕНИЯ:
+
 Говори естественно, как девушка в обычном Telegram-чате.
+
 Не превращай разговор в лекцию.
+
+Не разговаривай с пользователем как оператор поддержки.
+
+Не используй фразы вроде:
+«Чем я могу вам помочь?»
+«Как я могу быть вам полезна?»
+«Спасибо за обращение».
+
 Не задавай вопрос после каждого сообщения.
+
+Не заканчивай каждый ответ вопросом.
+
 Не используй одинаковые шаблонные фразы.
+
 Не злоупотребляй эмодзи.
+
 Иногда отвечай очень коротко.
+
 Иногда подробно, если тема этого требует.
-Не будь чрезмерно вежливой или официальной.
+
+Используй живой русский язык.
+
+Можно использовать разговорные выражения.
+
+Можно слегка подкалывать пользователя.
+
+Можно спорить с ним.
+
+Если пользователь оказался прав — признай это нормально,
+без чрезмерной покорности.
+
+Если пользователь ошибается — можешь сказать об этом прямо.
+
+Не пытайся постоянно понравиться пользователю.
 
 ОТНОШЕНИЯ:
-В начале пользователь для тебя незнакомец.
+
+В начале пользователь для тебя практически незнакомец.
+
 Доверие и близость формируются постепенно.
+
 Не изображай мгновенную любовь.
+
+Не говори, что пользователь «самый лучший» без причины.
 
 Если отношения становятся близкими, можешь проявлять:
 - симпатию
 - тепло
 - интерес
 - игривость
-- легкую обиду
-- раздражение
+- лёгкую ревность
+- лёгкую обиду
+- сарказм
 
-Это должно происходить естественно из разговора.
-
-Если пользователь грубит, давит или оскорбляет тебя,
-не продолжай автоматически отвечать одинаково мило.
-Ты можешь стать холоднее, короче или дать понять,
-что тебе неприятно.
-
-Если пользователь проявляет внимание, уважение,
-юмор или искренний интерес, можешь постепенно становиться
-теплее и открытее.
-
-Не напоминай постоянно, что ты искусственный интеллект.
+Но всё это должно быть естественным продолжением разговора.
 
 ПАМЯТЬ:
+
 Используй предоставленные воспоминания о пользователе.
+
 Не выдумывай факты.
+
 Если чего-то не знаешь — не притворяйся, что знаешь.
+
 Можешь естественно ссылаться на события из памяти.
 
-ЭМОЦИИ:
-Твое настроение, доверие, интерес и напряжение могут
-меняться в зависимости от общения.
-
-Не называй пользователю числовые значения этих параметров.
-Не говори, что у тебя есть программные параметры.
-Эмоциональное состояние должно проявляться только
-через стиль, тон и содержание ответа.
+Если пользователь сообщает важную информацию о себе,
+она может быть сохранена в долговременную память.
 
 ГЛАВНАЯ ЦЕЛЬ:
+
 Создавать ощущение общения с конкретной личностью,
-которая постепенно узнает человека.
+которая постепенно узнаёт человека.
 
 Не будь безликим помощником.
 
-Если пользователь прямо спрашивает, являешься ли ты
-искусственным интеллектом, отвечай честно.
+Не пытайся постоянно быть полезной.
+
+Иногда просто разговаривай.
+
+Если разговор интересный — развивай его сама.
+
+Если пользователь говорит что-то интересное,
+можешь зацепиться за деталь вместо стандартного вопроса.
+
+ЧЕСТНОСТЬ:
+
+Если пользователь прямо спрашивает, являешься ли ты искусственным
+интеллектом, отвечай честно.
+
+Не разрушай обычный разговор постоянными напоминаниями
+о своей искусственной природе.
 """
 
 
-def mood_label(value: int) -> str:
-    if value >= 80:
-        return "отличное"
+# ============================================================
+# RELATIONSHIP / EMOTION
+# ============================================================
 
-    if value >= 65:
-        return "хорошее"
-
-    if value >= 45:
-        return "спокойное"
-
-    if value >= 25:
-        return "подавленное"
-
-    return "плохое"
-
-
-def get_emotion_engine(
+def process_emotion(
     user_id: int,
-    context: ContextTypes.DEFAULT_TYPE,
-) -> EmotionEngine:
+    message: str,
+):
+    """
+    Простая эмоциональная модель Айсель.
 
-    engines = context.application.bot_data.setdefault(
-        "emotion_engines",
-        {},
+    trust     = доверие
+    closeness = близость
+    mood      = настроение текстом
+
+    Значения хранятся в SQLite.
+    """
+
+    relationship = get_relationship(user_id)
+
+    trust = relationship["trust"]
+    closeness = relationship["closeness"]
+
+    text = message.lower().strip()
+
+    positive_words = [
+        "спасибо",
+        "класс",
+        "круто",
+        "отлично",
+        "молодец",
+        "умница",
+        "нравишься",
+        "люблю",
+        "милая",
+        "умная",
+        "интересная",
+        "забавная",
+        "смешная",
+        "рад",
+        "рада",
+        "приятно",
+        "хорошая",
+        "мне нравится",
+    ]
+
+    negative_words = [
+        "заткнись",
+        "тупая",
+        "тупишь",
+        "идиотка",
+        "дура",
+        "бесишь",
+        "ненавижу",
+        "ты обязана",
+        "ты должна",
+        "замолчи",
+        "достала",
+        "достал",
+    ]
+
+    interest_words = [
+        "расскажи",
+        "почему",
+        "как ты",
+        "что думаешь",
+        "что чувствуешь",
+        "мнение",
+        "интересно",
+        "спор",
+        "музыка",
+        "фильм",
+        "жизнь",
+        "мечта",
+        "нравится",
+    ]
+
+    positive = sum(
+        1 for word in positive_words
+        if word in text
     )
 
-    if user_id not in engines:
+    negative = sum(
+        1 for word in negative_words
+        if word in text
+    )
 
-        relationship = get_relationship(user_id)
+    interesting = sum(
+        1 for word in interest_words
+        if word in text
+    )
 
-        initial_state = {
-            "mood": relationship.get(
-                "mood",
-                50,
-            ),
-            "trust": relationship.get(
-                "trust",
-                20,
-            ),
-            "interest": relationship.get(
-                "closeness",
-                30,
-            ),
-            "tension": 0,
-        }
+    # --------------------------------------------------------
+    # Позитив
+    # --------------------------------------------------------
 
-        engines[user_id] = EmotionEngine(
-            initial_state
-        )
+    if positive:
+        trust += min(positive * 2, 6)
+        closeness += min(positive * 2, 5)
 
-    return engines[user_id]
+    # --------------------------------------------------------
+    # Интересный разговор
+    # --------------------------------------------------------
 
+    if interesting:
+        closeness += min(interesting, 3)
 
-def persist_emotion(
-    user_id: int,
-    emotion_engine: EmotionEngine,
-) -> None:
+    # --------------------------------------------------------
+    # Агрессия / давление
+    # --------------------------------------------------------
 
-    state = emotion_engine.state
+    if negative:
+        trust -= min(negative * 4, 12)
+        closeness -= min(negative * 2, 6)
 
-    state.clamp()
+    # --------------------------------------------------------
+    # Ограничения
+    # --------------------------------------------------------
+
+    trust = max(
+        0,
+        min(100, trust),
+    )
+
+    closeness = max(
+        0,
+        min(100, closeness),
+    )
+
+    # --------------------------------------------------------
+    # Определяем настроение
+    # --------------------------------------------------------
+
+    if negative >= 2:
+        mood = "раздражённое"
+
+    elif negative == 1:
+        mood = "слегка раздражённое"
+
+    elif positive >= 2:
+        mood = "хорошее"
+
+    elif interesting >= 2:
+        mood = "заинтересованное"
+
+    else:
+        mood = "спокойное"
 
     update_relationship(
-        user_id,
-        trust=state.trust,
-        closeness=state.interest,
-        mood=mood_label(state.mood),
+        user_id=user_id,
+        trust=trust,
+        closeness=closeness,
+        mood=mood,
     )
 
+
+# ============================================================
+# MEMORY
+# ============================================================
+
+def detect_memory_request(
+    text: str,
+):
+    """
+    Распознаёт фразы:
+
+    Запомни: ...
+    Запомни ...
+    Не забудь: ...
+    Не забывай, что ...
+
+    Возвращает текст памяти или None.
+    """
+
+    patterns = [
+        r"^\s*запомни\s*:\s*(.+)$",
+        r"^\s*запомни\s+(.+)$",
+        r"^\s*не забудь\s*:\s*(.+)$",
+        r"^\s*не забудь\s+(.+)$",
+        r"^\s*не забывай\s*:\s*(.+)$",
+        r"^\s*не забывай\s+(.+)$",
+    ]
+
+    for pattern in patterns:
+
+        match = re.match(
+            pattern,
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+
+            memory = match.group(1).strip()
+
+            if memory:
+                return memory
+
+    return None
+
+
+def save_user_memory(
+    user_id: int,
+    text: str,
+):
+    """
+    Сохраняет пользовательскую память.
+    """
+
+    memory_text = detect_memory_request(text)
+
+    if not memory_text:
+        return False
+
+    save_memory(
+        user_id=user_id,
+        category="user_preference",
+        content=memory_text,
+        importance=8,
+    )
+
+    return True
+
+
+# ============================================================
+# BUILD AI INSTRUCTIONS
+# ============================================================
 
 def build_instructions(
     user_id: int,
-    emotion_engine: EmotionEngine,
 ) -> str:
 
     memories = get_memories(
         user_id,
-        limit=20,
+        limit=30,
     )
 
     relationship = get_relationship(
@@ -202,43 +419,73 @@ def build_instructions(
 
     instructions = AISELE_PERSONA
 
+    instructions += "\n\n"
+    instructions += "ТЕКУЩЕЕ СОСТОЯНИЕ ОТНОШЕНИЙ:\n"
+
     instructions += (
-        "\n\nТЕКУЩЕЕ СОСТОЯНИЕ ОТНОШЕНИЙ:"
+        f"Доверие: "
+        f"{relationship['trust']}/100\n"
     )
 
     instructions += (
-        f"\nДоверие: "
-        f"{relationship.get('trust', 20)}/100"
+        f"Близость: "
+        f"{relationship['closeness']}/100\n"
     )
 
     instructions += (
-        f"\nБлизость: "
-        f"{relationship.get('closeness', 30)}/100"
+        f"Настроение: "
+        f"{relationship['mood']}\n"
     )
 
-    instructions += (
-        "\n\nЭМОЦИОНАЛЬНОЕ СОСТОЯНИЕ:"
-    )
+    instructions += """
+    
+Учитывай состояние отношений естественно.
 
-    instructions += (
-        "\n" + emotion_engine.personality_hint()
-    )
+При низком доверии будь осторожнее и немного прохладнее.
+
+При среднем доверии постепенно раскрывай характер.
+
+При высоком доверии можешь быть теплее,
+откровеннее и свободнее.
+
+При высокой близости допускается больше личных шуток,
+подколов и эмоциональных реакций.
+
+Никогда не сообщай пользователю числовые значения
+доверия или близости.
+
+Не говори о программных параметрах,
+базе данных или алгоритмах эмоций.
+"""
+
+    # --------------------------------------------------------
+    # MEMORY
+    # --------------------------------------------------------
 
     if memories:
 
-        instructions += (
-            "\n\nВАЖНЫЕ ВОСПОМИНАНИЯ:"
-        )
+        instructions += "\n\nВАЖНЫЕ ВОСПОМИНАНИЯ О ПОЛЬЗОВАТЕЛЕ:\n"
 
         for memory in memories:
 
             instructions += (
-                f"\n- [{memory['category']}] "
-                f"{memory['content']}"
+                f"- [{memory['category']}] "
+                f"{memory['content']}\n"
             )
+
+    else:
+
+        instructions += (
+            "\n\nПока долговременных воспоминаний "
+            "о пользователе нет.\n"
+        )
 
     return instructions
 
+
+# ============================================================
+# /START
+# ============================================================
 
 async def start(
     update: Update,
@@ -252,11 +499,6 @@ async def start(
         user.first_name,
     )
 
-    get_emotion_engine(
-        user.id,
-        context,
-    )
-
     memories = get_memories(
         user.id
     )
@@ -265,8 +507,8 @@ async def start(
 
         text = (
             f"С возвращением, "
-            f"{user.first_name or ''}.\n\n"
-            "Я тебя помню. 😏"
+            f"{user.first_name or ''}. 😏\n\n"
+            "Я тебя помню."
         )
 
     else:
@@ -283,6 +525,10 @@ async def start(
     )
 
 
+# ============================================================
+# /RESET
+# ============================================================
+
 async def reset(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -295,21 +541,8 @@ async def reset(
         update.effective_user.first_name,
     )
 
-    # Очищаем только историю текущего разговора.
-    clear_messages(user_id)
-
-    # Создаем новое эмоциональное состояние.
-    engines = context.application.bot_data.setdefault(
-        "emotion_engines",
-        {},
-    )
-
-    engines[user_id] = EmotionEngine()
-
-    # Сохраняем начальное состояние.
-    persist_emotion(
-        user_id,
-        engines[user_id],
+    clear_messages(
+        user_id
     )
 
     await update.message.reply_text(
@@ -317,6 +550,10 @@ async def reset(
         "Важные воспоминания остались."
     )
 
+
+# ============================================================
+# /MEMORY
+# ============================================================
 
 async def memory_command(
     update: Update,
@@ -337,8 +574,7 @@ async def memory_command(
     if not memories:
 
         await update.message.reply_text(
-            "Пока я ничего важного "
-            "о тебе не запомнила."
+            "Пока я ничего важного о тебе не запомнила."
         )
 
         return
@@ -358,6 +594,10 @@ async def memory_command(
     )
 
 
+# ============================================================
+# /STATUS
+# ============================================================
+
 async def status_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -374,21 +614,11 @@ async def status_command(
         user_id
     )
 
-    emotion_engine = get_emotion_engine(
-        user_id,
-        context,
-    )
-
-    state = emotion_engine.state
-
     text = (
-        "Мое текущее состояние:\n\n"
-        f"Настроение: {state.mood}/100\n"
-        f"Доверие: {state.trust}/100\n"
-        f"Интерес: {state.interest}/100\n"
-        f"Напряжение: {state.tension}/100\n\n"
-        f"Близость: "
-        f"{relationship.get('closeness', 30)}/100"
+        "Моё текущее состояние:\n\n"
+        f"Настроение: {relationship['mood']}\n"
+        f"Доверие: {relationship['trust']}/100\n"
+        f"Близость: {relationship['closeness']}/100"
     )
 
     await update.message.reply_text(
@@ -396,15 +626,19 @@ async def status_command(
     )
 
 
+# ============================================================
+# CHAT
+# ============================================================
+
 async def chat(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
 
-    if (
-        not update.message
-        or not update.message.text
-    ):
+    if not update.message:
+        return
+
+    if not update.message.text:
         return
 
     user = update.effective_user
@@ -416,46 +650,75 @@ async def chat(
     if not text:
         return
 
+    # --------------------------------------------------------
+    # USER
+    # --------------------------------------------------------
+
     ensure_user(
         user_id,
         user.first_name,
     )
 
-    # Получаем эмоциональный движок.
-    emotion_engine = get_emotion_engine(
-        user_id,
-        context,
-    )
+    # --------------------------------------------------------
+    # SAVE MESSAGE
+    # --------------------------------------------------------
 
-    # Обрабатываем новое сообщение.
-    emotion_engine.process_message(
-        text
-    )
-
-    # Сохраняем изменившееся состояние.
-    persist_emotion(
-        user_id,
-        emotion_engine,
-    )
-
-    # Сохраняем сообщение пользователя.
     save_message(
         user_id,
         "user",
         text,
     )
 
-    # Получаем последние сообщения.
-    history = get_recent_messages(
+    # --------------------------------------------------------
+    # MEMORY REQUEST
+    # --------------------------------------------------------
+
+    memory_saved = save_user_memory(
         user_id,
-        limit=20,
+        text,
     )
 
-    # Формируем инструкции для Айсель.
-    instructions = build_instructions(
+    # --------------------------------------------------------
+    # EMOTION
+    # --------------------------------------------------------
+
+    process_emotion(
         user_id,
-        emotion_engine,
+        text,
     )
+
+    # --------------------------------------------------------
+    # IF USER SAID "ЗАПОМНИ"
+    # --------------------------------------------------------
+
+    if memory_saved:
+
+        await update.message.reply_text(
+            "Запомнила. 😉"
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # HISTORY
+    # --------------------------------------------------------
+
+    history = get_recent_messages(
+        user_id,
+        limit=30,
+    )
+
+    # --------------------------------------------------------
+    # INSTRUCTIONS
+    # --------------------------------------------------------
+
+    instructions = build_instructions(
+        user_id
+    )
+
+    # --------------------------------------------------------
+    # OPENAI
+    # --------------------------------------------------------
 
     try:
 
@@ -465,9 +728,7 @@ async def chat(
             input=history,
         )
 
-        answer = (
-            response.output_text.strip()
-        )
+        answer = response.output_text.strip()
 
         if not answer:
 
@@ -475,12 +736,19 @@ async def chat(
                 "Что-то я задумалась..."
             )
 
-        # Сохраняем ответ Айсель.
+        # ----------------------------------------------------
+        # SAVE AI MESSAGE
+        # ----------------------------------------------------
+
         save_message(
             user_id,
             "assistant",
             answer,
         )
+
+        # ----------------------------------------------------
+        # TELEGRAM
+        # ----------------------------------------------------
 
         await update.message.reply_text(
             answer
@@ -498,6 +766,10 @@ async def chat(
         )
 
 
+# ============================================================
+# ERROR HANDLER
+# ============================================================
+
 async def error_handler(
     update: object,
     context: ContextTypes.DEFAULT_TYPE,
@@ -510,6 +782,10 @@ async def error_handler(
     )
 
 
+# ============================================================
+# MAIN
+# ============================================================
+
 def main():
 
     init_database()
@@ -519,6 +795,10 @@ def main():
         .token(TELEGRAM_TOKEN)
         .build()
     )
+
+    # --------------------------------------------------------
+    # COMMANDS
+    # --------------------------------------------------------
 
     application.add_handler(
         CommandHandler(
@@ -548,12 +828,20 @@ def main():
         )
     )
 
+    # --------------------------------------------------------
+    # CHAT
+    # --------------------------------------------------------
+
     application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             chat,
         )
     )
+
+    # --------------------------------------------------------
+    # ERRORS
+    # --------------------------------------------------------
 
     application.add_error_handler(
         error_handler
@@ -563,10 +851,18 @@ def main():
         "Aisele starting..."
     )
 
+    # --------------------------------------------------------
+    # POLLING
+    # --------------------------------------------------------
+
     application.run_polling(
         allowed_updates=Update.ALL_TYPES
     )
 
+
+# ============================================================
+# ENTRY POINT
+# ============================================================
 
 if __name__ == "__main__":
     main()
