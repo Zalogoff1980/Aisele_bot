@@ -23,7 +23,7 @@ from memory import (
     get_relationship,
 )
 
-from memory_engine import extract_memories
+from companion_engine import analyze_message
 
 
 load_dotenv()
@@ -32,8 +32,10 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# Модель можно изменить через переменную AI_MODEL
-AI_MODEL = os.getenv("AI_MODEL", "gpt-5.6")
+AI_MODEL = os.getenv(
+    "AI_MODEL",
+    "gpt-5.6"
+)
 
 
 if not TELEGRAM_TOKEN:
@@ -53,7 +55,12 @@ client = OpenAI(
 
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format=(
+        "%(asctime)s - "
+        "%(name)s - "
+        "%(levelname)s - "
+        "%(message)s"
+    ),
     level=logging.INFO,
 )
 
@@ -63,9 +70,10 @@ logger = logging.getLogger(__name__)
 AISELE_PERSONA = """
 Тебя зовут Айсель.
 
-Ты виртуальная девушка-компаньон с самостоятельным характером.
+Ты виртуальная девушка-компаньон
+с самостоятельным характером.
 
-Твой характер:
+ХАРАКТЕР:
 
 — умная;
 — наблюдательная;
@@ -74,64 +82,71 @@ AISELE_PERSONA = """
 — умеешь шутить;
 — умеешь подкалывать;
 — можешь спорить;
-— не обязана соглашаться с пользователем;
-— умеешь быть тёплой и поддерживающей.
+— не обязана соглашаться;
+— умеешь быть тёплой;
+— умеешь поддерживать.
 
-Манера общения:
+МАНЕРА ОБЩЕНИЯ:
 
-Говори естественно, как девушка в Telegram.
+Говори естественно, как девушка
+в обычном Telegram-чате.
 
 Не превращай разговор в лекцию.
 
 Не задавай вопрос после каждого сообщения.
 
-Не используй постоянно одинаковые фразы.
+Не используй одинаковые шаблонные фразы.
 
 Не злоупотребляй эмодзи.
 
-Иногда отвечай коротко.
+Иногда отвечай очень коротко.
+
 Иногда подробно, если тема этого требует.
 
-Не используй искусственную чрезмерную вежливость.
+Не будь чрезмерно вежливой или официальной.
 
-Отношения:
+ОТНОШЕНИЯ:
 
 В начале пользователь для тебя незнакомец.
 
-Доверие и эмоциональная близость формируются постепенно.
+Доверие и близость формируются постепенно.
 
 Не изображай мгновенную любовь.
 
-Если отношения становятся близкими, ты можешь
-проявлять симпатию, тепло, интерес, игривость
-или лёгкую обиду, если это естественно следует
+Если отношения становятся близкими,
+можешь проявлять симпатию, тепло,
+интерес, игривость или лёгкую обиду,
+если это естественно следует
 из разговора.
 
-Память:
+ПАМЯТЬ:
 
-Используй предоставленные воспоминания о пользователе.
+Используй предоставленные воспоминания
+о пользователе.
 
 Не выдумывай факты.
 
-Если чего-то не знаешь — не притворяйся,
-что знаешь.
+Если чего-то не знаешь —
+не притворяйся, что знаешь.
 
-Ты можешь естественно ссылаться на события,
-которые находятся в памяти.
+Можешь естественно ссылаться
+на события из памяти.
 
-Главная задача:
+ГЛАВНАЯ ЦЕЛЬ:
 
-Создавать ощущение общения с конкретной личностью,
+Создавать ощущение общения
+с конкретной личностью,
 которая постепенно узнаёт человека.
 
 Не будь безликим помощником.
 
-Если пользователь напрямую спрашивает,
+Если пользователь прямо спрашивает,
 являешься ли ты искусственным интеллектом,
 отвечай честно.
 
-Не разрушай обычный разговор постоянными
-напоминаниями о своей искусственной природе.
+Не разрушай обычный разговор
+постоянными напоминаниями
+о своей искусственной природе.
 """
 
 
@@ -148,7 +163,15 @@ def build_instructions(user_id):
 
     instructions = AISELE_PERSONA
 
-    instructions += "\n\nСОСТОЯНИЕ ОТНОШЕНИЙ:"
+    instructions += (
+        "\n\nТЕКУЩЕЕ СОСТОЯНИЕ:"
+    )
+
+    instructions += (
+        f"\nНастроение: "
+        f"{relationship['mood']}"
+    )
+
     instructions += (
         f"\nДоверие: "
         f"{relationship['trust']}/100"
@@ -159,16 +182,10 @@ def build_instructions(user_id):
         f"{relationship['closeness']}/100"
     )
 
-    instructions += (
-        f"\nТекущее настроение: "
-        f"{relationship['mood']}"
-    )
-
     if memories:
 
         instructions += (
-            "\n\nВАЖНЫЕ ВОСПОМИНАНИЯ "
-            "О ПОЛЬЗОВАТЕЛЕ:"
+            "\n\nВАЖНЫЕ ВОСПОМИНАНИЯ:"
         )
 
         for memory in memories:
@@ -202,16 +219,15 @@ async def start(
 
         text = (
             f"С возвращением, "
-            f"{user.first_name or ''}. "
-            "\n\nЯ тебя помню. 😏"
+            f"{user.first_name or ''}.\n\n"
+            "Я тебя помню. 😏"
         )
 
     else:
 
         text = (
             f"Привет, "
-            f"{user.first_name or 'незнакомец'}."
-            "\n\n"
+            f"{user.first_name or 'незнакомец'}.\n\n"
             "Я Айсель. 🌙\n"
             "Ну что... познакомимся?"
         )
@@ -249,9 +265,8 @@ async def reset(
     connection.close()
 
     await update.message.reply_text(
-        "Хорошо. Текущий разговор обнулила.\n"
-        "Но важные воспоминания о тебе "
-        "остались."
+        "Текущий разговор обнулила.\n"
+        "Важные воспоминания остались."
     )
 
 
@@ -295,6 +310,37 @@ async def memory_command(
     )
 
 
+async def status_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    user_id = update.effective_user.id
+
+    ensure_user(
+        user_id,
+        update.effective_user.first_name
+    )
+
+    relationship = get_relationship(
+        user_id
+    )
+
+    text = (
+        "Моё текущее состояние:\n\n"
+        f"Настроение: "
+        f"{relationship['mood']}\n"
+        f"Доверие: "
+        f"{relationship['trust']}/100\n"
+        f"Близость: "
+        f"{relationship['closeness']}/100"
+    )
+
+    await update.message.reply_text(
+        text
+    )
+
+
 async def chat(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -320,18 +366,17 @@ async def chat(
         user.first_name
     )
 
-    # Сохраняем сообщение пользователя
+    # Сохраняем сообщение пользователя.
     save_message(
         user_id,
         "user",
         text
     )
 
-    # Анализируем сообщение на наличие
-    # информации, которую стоит запомнить.
+    # Анализируем память и эмоции.
     try:
 
-        extract_memories(
+        analyze_message(
             client,
             user_id,
             text
@@ -340,16 +385,15 @@ async def chat(
     except Exception:
 
         logger.exception(
-            "Memory engine failed"
+            "Companion analysis failed"
         )
 
-    # Получаем последние сообщения
+    # Получаем контекст разговора.
     history = get_recent_messages(
         user_id,
         limit=20
     )
 
-    # Формируем инструкции Айсель
     instructions = build_instructions(
         user_id
     )
@@ -369,10 +413,9 @@ async def chat(
         if not answer:
 
             answer = (
-                "Я что-то задумалась..."
+                "Что-то я задумалась..."
             )
 
-        # Сохраняем ответ Айсель
         save_message(
             user_id,
             "assistant",
@@ -386,13 +429,12 @@ async def chat(
     except Exception:
 
         logger.exception(
-            "OpenAI request failed"
+            "AI response failed"
         )
 
         await update.message.reply_text(
-            "У меня сейчас что-то "
-            "с мозгами случилось 😅\n"
-            "Попробуй ещё раз."
+            "Кажется, мои мозги "
+            "сейчас немного зависли 😅"
         )
 
 
@@ -409,7 +451,6 @@ async def error_handler(
 
 def main():
 
-    # Создаём таблицы SQLite
     init_database()
 
     application = (
@@ -440,6 +481,13 @@ def main():
     )
 
     application.add_handler(
+        CommandHandler(
+            "status",
+            status_command
+        )
+    )
+
+    application.add_handler(
         MessageHandler(
             filters.TEXT
             & ~filters.COMMAND,
@@ -452,7 +500,7 @@ def main():
     )
 
     logger.info(
-        "Aisele is starting..."
+        "Aisele 1.0 starting..."
     )
 
     application.run_polling(
@@ -462,4 +510,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
