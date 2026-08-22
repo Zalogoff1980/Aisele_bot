@@ -7,13 +7,8 @@ logger = logging.getLogger(__name__)
 
 
 def normalize(text):
-    """
-    Простая нормализация текста
-    для поиска очевидных дублей.
-    """
-
     return (
-        text
+        str(text)
         .lower()
         .strip()
         .replace(".", "")
@@ -27,12 +22,9 @@ def is_duplicate(
     new_content,
     existing_memories,
 ):
-    """
-    Проверяем, не существует ли уже
-    практически такого же воспоминания.
-    """
-
-    new_text = normalize(new_content)
+    new_text = normalize(
+        new_content
+    )
 
     for memory in existing_memories:
 
@@ -52,19 +44,14 @@ def save_unique_memory(
     content,
     importance=5,
 ):
-    """
-    Сохраняет воспоминание только если
-    такого факта ещё нет.
-    """
-
     existing = get_memories(
         user_id,
-        limit=100
+        limit=100,
     )
 
     if is_duplicate(
         content,
-        existing
+        existing,
     ):
         logger.info(
             "Duplicate memory skipped"
