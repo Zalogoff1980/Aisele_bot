@@ -1,8 +1,6 @@
 import logging
-import os
 import sqlite3
 
-from dotenv import load_dotenv
 from openai import OpenAI
 
 from telegram import Update
@@ -13,7 +11,11 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-
+from config import (
+    TELEGRAM_TOKEN,
+    OPENAI_API_KEY,
+    AI_MODEL,
+)
 from memory import (
     init_database,
     ensure_user,
@@ -23,19 +25,8 @@ from memory import (
     get_relationship,
 )
 
-from companion_engine import analyze_message
+from companion_engine import analyze_mess
 
-
-load_dotenv()
-
-
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-AI_MODEL = os.getenv(
-    "AI_MODEL",
-    "gpt-5.6"
-)
 
 
 if not TELEGRAM_TOKEN:
