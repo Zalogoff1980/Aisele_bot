@@ -1,5 +1,4 @@
 import logging
-import sqlite3
 
 from openai import OpenAI
 
@@ -11,11 +10,13 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+
 from config import (
     TELEGRAM_TOKEN,
     OPENAI_API_KEY,
     AI_MODEL,
 )
+
 from memory import (
     init_database,
     ensure_user,
@@ -23,26 +24,10 @@ from memory import (
     get_recent_messages,
     get_memories,
     get_relationship,
+    clear_messages,
 )
 
-from companion_engine import analyze_mess
-
-
-
-if not TELEGRAM_TOKEN:
-    raise RuntimeError(
-        "TELEGRAM_TOKEN is not configured"
-    )
-
-if not OPENAI_API_KEY:
-    raise RuntimeError(
-        "OPENAI_API_KEY is not configured"
-    )
-
-
-client = OpenAI(
-    api_key=OPENAI_API_KEY
-)
+from companion_engine import analyze_message
 
 
 logging.basicConfig(
@@ -56,6 +41,11 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
+client = OpenAI(
+    api_key=OPENAI_API_KEY
+)
 
 
 AISELE_PERSONA = """
@@ -92,9 +82,11 @@ AISELE_PERSONA = """
 
 Иногда отвечай очень коротко.
 
-Иногда подробно, если тема этого требует.
+Иногда подробно,
+если тема этого требует.
 
-Не будь чрезмерно вежливой или официальной.
+Не будь чрезмерно вежливой
+или официальной.
 
 ОТНОШЕНИЯ:
 
@@ -141,7 +133,7 @@ AISELE_PERSONA = """
 """
 
 
-def build_instructions(user_id):
+def build_instructions(user_id: int) -> str:
 
     memories = get_memories(
         user_id,
@@ -240,20 +232,9 @@ async def reset(
         update.effective_user.first_name
     )
 
-    connection = sqlite3.connect(
-        "aisele.db"
+    clear_messages(
+        user_id
     )
-
-    connection.execute(
-        """
-        DELETE FROM messages
-        WHERE user_id = ?
-        """,
-        (user_id,)
-    )
-
-    connection.commit()
-    connection.close()
 
     await update.message.reply_text(
         "Текущий разговор обнулила.\n"
@@ -357,14 +338,12 @@ async def chat(
         user.first_name
     )
 
-    # Сохраняем сообщение пользователя.
     save_message(
         user_id,
         "user",
         text
     )
 
-    # Анализируем память и эмоции.
     try:
 
         analyze_message(
@@ -379,7 +358,6 @@ async def chat(
             "Companion analysis failed"
         )
 
-    # Получаем контекст разговора.
     history = get_recent_messages(
         user_id,
         limit=20
@@ -491,7 +469,7 @@ def main():
     )
 
     logger.info(
-        "Aisele 1.0 starting..."
+        "Aisele starting..."
     )
 
     application.run_polling(
