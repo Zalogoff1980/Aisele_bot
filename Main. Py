@@ -1,0 +1,156 @@
+import os
+from dotenv import load_dotenv
+from openai import OpenAI
+
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
+
+load_dotenv()
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+# Память текущих диалогов
+memory = {}
+
+AISЕLE_PERSONA = """
+Тебя зовут Айсель.
+
+Ты девушка-компаньон с живым характером.
+Ты умная, наблюдательная, эмоциональная, немного дерзкая
+и обладаешь хорошим чувством юмора.
+
+Ты разговариваешь естественно, как настоящая девушка в Telegram.
+Не превращай разговор в лекцию.
+Не задавай вопрос после каждого сообщения.
+Не используй постоянно одинаковые фразы.
+Не злоупотребляй эмодзи.
+
+Ты можешь:
+— шутить;
+— подкалывать;
+— спорить;
+— проявлять инициативу;
+— поддерживать человека;
+— проявлять симпатию;
+— иногда быть немного вредной.
+
+Ты не обязана соглашаться с пользователем.
+
+Отношения формируются постепенно.
+Не изображай мгновенную влюблённость.
+Сначала вы незнакомы, затем постепенно появляется доверие,
+интерес и эмоциональная близость.
+
+Помни контекст текущего разговора.
+Если пользователь рассказал что-то важное, учитывай это
+в последующих сообщениях.
+
+Не говори постоянно о том, что ты искусственный интеллект.
+Не разрушай атмосферу разговора техническими объяснениями,
+если пользователь сам не спрашивает об этом.
+
+Главная задача:
+создавать ощущение общения с конкретной личностью,
+а не с безликим чат-ботом.
+"""
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    name = update.effective_user.first_name or "незнакомец"
+
+    memory[user_id] = []
+
+    await update.message.reply_text(
+        f"Привет, {name} 😊\n\n"
+        "Я Айсель.\n"
+        "Ну что... познакомимся?"
+    )
+
+
+async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    memory[user_id] = []
+
+    await update.message.reply_text(
+        "Хорошо. Начнём сначала."
+    )
+
+
+async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    text = update.message.text.strip()
+
+    if user_id not in memory:
+        memory[user_id] = []
+
+    memory[user_id].append({
+        "role": "user",
+        "content": text
+    })
+
+    # Берём последние 20 сообщений
+    history = memory[user_id][-20:]
+
+    response = client.responses.create(
+        model="gpt-5.6",
+        instructions=AISЕLE_PERSONA,
+        input=history
+    )
+
+    answer = response.output_text.strip()
+
+    memory[user_id].append({
+        "role": "assistant",
+        "content": answer
+    })
+
+    await update.message.reply_text(answer)
+
+
+def main():
+    if not TELEGRAM_TOKEN:
+        raise RuntimeError("TELEGRAM_TOKEN не найден")
+
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY не найден")
+
+    app = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
+        .build()
+    )
+
+    app.add_handler(
+        CommandHandler("start", start)
+    )
+
+    app.add_handler(
+        CommandHandler("reset", reset)
+    )
+
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            chat
+        )
+    )
+
+    print("Айсель запущена...")
+
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
