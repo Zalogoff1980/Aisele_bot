@@ -12,6 +12,7 @@ from telegram.ext import (
 )
 
 from config import TELEGRAM_TOKEN, OPENAI_API_KEY, AI_MODEL
+
 from memory import (
     init_database,
     ensure_user,
@@ -21,6 +22,8 @@ from memory import (
     get_relationship,
     clear_messages,
 )
+
+from emotion_engine import EmotionEngine
 
 
 logging.basicConfig(
@@ -68,6 +71,9 @@ AISELE_PERSONA = """
 тепло, интерес, игривость или легкую обиду, если это естественно
 следует из разговора.
 
+Не пытайся постоянно напоминать пользователю,
+что ты искусственный интеллект.
+
 ПАМЯТЬ:
 Используй предоставленные воспоминания о пользователе.
 Не выдумывай факты.
@@ -81,28 +87,71 @@ AISELE_PERSONA = """
 
 Если пользователь прямо спрашивает, являешься ли ты искусственным
 интеллектом, отвечай честно.
-Не разрушай обычный разговор постоянными напоминаниями
-о своей искусственной природе.
 """
 
 
-def build_instructions(user_id: int) -> str:
-    memories = get_memories(user_id, limit=20)
+def get_emotion_engine(
+    user_id: int,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> EmotionEngine:
+
+    engines = context.application.bot_data.setdefault(
+        "emotion_engines",
+        {},
+    )
+
+    if user_id not in engines:
+        relationship = get_relationship(user_id)
+
+        initial_state = {
+            "mood": relationship.get("mood", 50),
+            "trust": relationship.get("trust", 20),
+            "interest": relationship.get("closeness", 30),
+            "tension": 0,
+        }
+
+        engines[user_id] = EmotionEngine(initial_state)
+
+    return engines[user_id]
+
+
+def build_instructions(
+    user_id: int,
+    emotion_engine: EmotionEngine,
+) -> str:
+
+    memories = get_memories(
+        user_id,
+        limit=20,
+    )
+
     relationship = get_relationship(user_id)
 
     instructions = AISELE_PERSONA
 
-    instructions += "\n\nТЕКУЩЕЕ СОСТОЯНИЕ:"
-    instructions += f"\nНастроение: {relationship['mood']}"
-    instructions += f"\nДоверие: {relationship['trust']}/100"
-    instructions += f"\nБлизость: {relationship['closeness']}/100"
+    instructions += "\n\nТЕКУЩЕЕ СОСТОЯНИЕ ОТНОШЕНИЙ:"
+
+    instructions += (
+        f"\nДоверие: {relationship.get('trust', 20)}/100"
+    )
+
+    instructions += (
+        f"\nБлизость: {relationship.get('closeness', 30)}/100"
+    )
+
+    instructions += "\n\nЭМОЦИОНАЛЬНОЕ СОСТОЯНИЕ:"
+
+    instructions += (
+        "\n" + emotion_engine.personality_hint()
+    )
 
     if memories:
         instructions += "\n\nВАЖНЫЕ ВОСПОМИНАНИЯ:"
 
         for memory in memories:
             instructions += (
-                f"\n- [{memory['category']}] {memory['content']}"
+                f"\n- [{memory['category']}] "
+                f"{memory['content']}"
             )
 
     return instructions
@@ -120,6 +169,12 @@ async def start(
     )
 
     memories = get_memories(user.id)
+
+    # Создаём эмоциональный движок для пользователя.
+    get_emotion_engine(
+        user.id,
+        context,
+    )
 
     if memories:
         text = (
@@ -148,6 +203,15 @@ async def reset(
     )
 
     clear_messages(user_id)
+
+    # Сбрасываем только эмоциональное состояние
+    # текущего диалога, память пользователя не трогаем.
+    engines = context.application.bot_data.get(
+        "emotion_engines",
+        {},
+    )
+
+    engines[user_id] = EmotionEngine()
 
     await update.message.reply_text(
         "Текущий разговор обнулила.\n"
@@ -199,11 +263,21 @@ async def status_command(
 
     relationship = get_relationship(user_id)
 
+    emotion_engine = get_emotion_engine(
+        user_id,
+        context,
+    )
+
+    state = emotion_engine.state
+
     text = (
         "Мое текущее состояние:\n\n"
-        f"Настроение: {relationship['mood']}\n"
-        f"Доверие: {relationship['trust']}/100\n"
-        f"Близость: {relationship['closeness']}/100"
+        f"Настроение: {state.mood}/100\n"
+        f"Доверие: {state.trust}/100\n"
+        f"Интерес: {state.interest}/100\n"
+        f"Напряжение: {state.tension}/100\n\n"
+        f"Близость: "
+        f"{relationship.get('closeness', 30)}/100"
     )
 
     await update.message.reply_text(text)
@@ -228,6 +302,16 @@ async def chat(
         user.first_name,
     )
 
+    # Получаем эмоциональное состояние пользователя.
+    emotion_engine = get_emotion_engine(
+        user_id,
+        context,
+    )
+
+    # Сначала анализируем сообщение.
+    emotion_engine.process_message(text)
+
+    # Сохраняем сообщение пользователя.
     save_message(
         user_id,
         "user",
@@ -240,7 +324,8 @@ async def chat(
     )
 
     instructions = build_instructions(
-        user_id
+        user_id,
+        emotion_engine,
     )
 
     try:
