@@ -31,6 +31,10 @@ from memory import (
 )
 
 
+# ============================================================
+# LOGGING
+# ============================================================
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -38,10 +42,19 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+
+# ============================================================
+# OPENAI
+# ============================================================
+
 client = OpenAI(
     api_key=OPENAI_API_KEY
 )
 
+
+# ============================================================
+# AISELE PERSONA
+# ============================================================
 
 AISELE_PERSONA = """
 Тебя зовут Айсель.
@@ -49,6 +62,7 @@ AISELE_PERSONA = """
 Ты виртуальная девушка-компаньон с самостоятельным характером.
 
 ХАРАКТЕР:
+
 - умная
 - наблюдательная
 - эмоциональная
@@ -113,6 +127,7 @@ AISELE_PERSONA = """
 Не говори, что пользователь «самый лучший» без причины.
 
 Если отношения становятся близкими, можешь проявлять:
+
 - симпатию
 - тепло
 - интерес
@@ -182,6 +197,10 @@ AISELE_PERSONA = """
 """
 
 
+# ============================================================
+# EMOTION ENGINE
+# ============================================================
+
 def process_emotion(
     user_id: int,
     message: str,
@@ -246,20 +265,17 @@ def process_emotion(
     ]
 
     positive = sum(
-        1
-        for word in positive_words
+        1 for word in positive_words
         if word in text
     )
 
     negative = sum(
-        1
-        for word in negative_words
+        1 for word in negative_words
         if word in text
     )
 
     interesting = sum(
-        1
-        for word in interest_words
+        1 for word in interest_words
         if word in text
     )
 
@@ -303,16 +319,12 @@ def process_emotion(
 
     if negative >= 2:
         mood = "раздражённое"
-
     elif negative == 1:
         mood = "слегка раздражённое"
-
     elif positive >= 2:
         mood = "хорошее"
-
     elif interesting >= 2:
         mood = "заинтересованное"
-
     else:
         mood = "спокойное"
 
@@ -324,9 +336,111 @@ def process_emotion(
     )
 
 
+# ============================================================
+# MEMORY NORMALIZATION
+# ============================================================
+
+def normalize_memory(text: str) -> str:
+    """
+    Нормализует текст для проверки дублей.
+    """
+
+    text = text.lower().strip()
+
+    text = re.sub(
+        r"[.!?,:;]+",
+        " ",
+        text,
+    )
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text,
+    )
+
+    return text.strip()
+
+
+def memory_exists(
+    user_id: int,
+    content: str,
+) -> bool:
+
+    target = normalize_memory(
+        content
+    )
+
+    memories = get_memories(
+        user_id,
+        limit=100,
+    )
+
+    for memory in memories:
+
+        existing = normalize_memory(
+            memory["content"]
+        )
+
+        if existing == target:
+            return True
+
+    return False
+
+
+def save_memory_if_new(
+    user_id: int,
+    category: str,
+    content: str,
+    importance: int = 7,
+) -> bool:
+
+    if not content:
+        return False
+
+    content = content.strip()
+
+    if len(content) < 3:
+        return False
+
+    if len(content) > 200:
+        return False
+
+    if memory_exists(
+        user_id,
+        content,
+    ):
+        logger.info(
+            "Duplicate memory ignored: %s",
+            content,
+        )
+
+        return False
+
+    save_memory(
+        user_id=user_id,
+        category=category,
+        content=content,
+        importance=importance,
+    )
+
+    logger.info(
+        "Memory saved for %s: %s",
+        user_id,
+        content,
+    )
+
+    return True
+
+
+# ============================================================
+# EXPLICIT MEMORY
+# ============================================================
+
 def detect_memory_request(
     text: str,
 ):
+
     patterns = [
         r"^\s*запомни\s*:\s*(.+)$",
         r"^\s*запомни\s+(.+)$",
@@ -357,7 +471,7 @@ def detect_memory_request(
 def save_user_memory(
     user_id: int,
     text: str,
-):
+) -> bool:
 
     memory_text = detect_memory_request(
         text
@@ -366,160 +480,334 @@ def save_user_memory(
     if not memory_text:
         return False
 
-    save_memory(
+    saved = save_memory_if_new(
         user_id=user_id,
         category="user_preference",
         content=memory_text,
         importance=9,
     )
 
-    logger.info(
-        "Explicit memory saved for %s: %s",
-        user_id,
-        memory_text,
-    )
-
-    return True
+    return saved
 
 
-def detect_automatic_memory(
+# ============================================================
+# AUTOMATIC MEMORY
+# ============================================================
+
+def detect_automatic_memories(
     text: str,
 ):
     """
-    Определяет простые важные факты
-    без дополнительного запроса к OpenAI.
+    Возвращает несколько отдельных фактов.
+
+    Например:
+
+    «Я люблю тяжёлую музыку и меня зовут Максим»
+
+    превращается в:
+
+    - Пользователя зовут Максим
+    - Пользователь любит тяжёлую музыку
     """
 
-    patterns = [
+    memories = []
 
-        (
-            r"^(?:я\s+)?люблю\s+(.+)$",
-            "preference",
-            "Пользователь любит {0}",
-            7,
-        ),
+    text = text.strip()
 
-        (
-            r"^(?:мне\s+)?нравится\s+(.+)$",
-            "preference",
-            "Пользователю нравится {0}",
-            7,
-        ),
+    if not text:
+        return memories
 
-        (
-            r"^мне\s+нравятся\s+(.+)$",
-            "preference",
-            "Пользователю нравятся {0}",
-            7,
-        ),
+    # --------------------------------------------------------
+    # NAME
+    # --------------------------------------------------------
 
-        (
-            r"^(?:я\s+)?не\s+люблю\s+(.+)$",
-            "dislike",
-            "Пользователь не любит {0}",
-            8,
-        ),
-
-        (
-            r"^мне\s+не\s+нравится\s+(.+)$",
-            "dislike",
-            "Пользователю не нравится {0}",
-            8,
-        ),
-
-        (
-            r"^(?:я\s+)?хочу\s+(.+)$",
-            "goal",
-            "Пользователь хочет {0}",
-            7,
-        ),
-
-        (
-            r"^мой\s+любимый\s+(.+)$",
-            "preference",
-            "Любимый {0} пользователя",
-            8,
-        ),
-
-        (
-            r"^моя\s+любимая\s+(.+)$",
-            "preference",
-            "Любимая {0} пользователя",
-            8,
-        ),
-
-        (
-            r"^у\s+меня\s+есть\s+(.+)$",
-            "personal",
-            "У пользователя есть {0}",
-            6,
-        ),
-
-        (
-            r"^я\s+живу\s+(.+)$",
-            "personal",
-            "Пользователь живёт {0}",
-            9,
-        ),
-
-        (
-            r"^я\s+работаю\s+(.+)$",
-            "personal",
-            "Пользователь работает {0}",
-            8,
-        ),
-
-        (
-            r"^я\s+занимаюсь\s+(.+)$",
-            "personal",
-            "Пользователь занимается {0}",
-            7,
-        ),
-
-        (
-            r"^я\s+хочу\s+научиться\s+(.+)$",
-            "goal",
-            "Пользователь хочет научиться {0}",
-            8,
-        ),
+    name_patterns = [
+        r"(?:меня\s+зовут|моё\s+имя)\s+([А-ЯЁA-Z][а-яёa-z-]{1,30})",
+        r"^я\s+([А-ЯЁA-Z][а-яёa-z-]{1,30})$",
     ]
 
-    for (
-        pattern,
-        category,
-        template,
-        importance,
-    ) in patterns:
+    for pattern in name_patterns:
 
-        match = re.match(
+        match = re.search(
             pattern,
             text,
             flags=re.IGNORECASE,
         )
 
-        if not match:
-            continue
+        if match:
 
-        value = match.group(1).strip()
+            name = match.group(1).strip()
 
-        if len(value) < 3:
-            continue
+            memories.append(
+                (
+                    "personal",
+                    f"Пользователя зовут {name}",
+                    10,
+                )
+            )
 
-        if len(value) > 200:
-            continue
+            break
 
-        memory = template.format(
-            value
+    # --------------------------------------------------------
+    # LOVE
+    # --------------------------------------------------------
+
+    love_matches = re.findall(
+        r"(?:я\s+)?люблю\s+([^,.!?]+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    for value in love_matches:
+
+        value = value.strip()
+
+        if len(value) >= 3:
+
+            memories.append(
+                (
+                    "preference",
+                    f"Пользователь любит {value}",
+                    7,
+                )
+            )
+
+    # --------------------------------------------------------
+    # LIKE
+    # --------------------------------------------------------
+
+    like_matches = re.findall(
+        r"мне\s+нрав(?:ится|ятся)\s+([^,.!?]+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    for value in like_matches:
+
+        value = value.strip()
+
+        if len(value) >= 3:
+
+            memories.append(
+                (
+                    "preference",
+                    f"Пользователю нравится {value}",
+                    7,
+                )
+            )
+
+    # --------------------------------------------------------
+    # DISLIKE
+    # --------------------------------------------------------
+
+    dislike_matches = re.findall(
+        r"(?:я\s+)?не\s+люблю\s+([^,.!?]+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    for value in dislike_matches:
+
+        value = value.strip()
+
+        if len(value) >= 3:
+
+            memories.append(
+                (
+                    "dislike",
+                    f"Пользователь не любит {value}",
+                    8,
+                )
+            )
+
+    dislike_matches_2 = re.findall(
+        r"мне\s+не\s+нрав(?:ится|ятся)\s+([^,.!?]+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    for value in dislike_matches_2:
+
+        value = value.strip()
+
+        if len(value) >= 3:
+
+            memories.append(
+                (
+                    "dislike",
+                    f"Пользователю не нравится {value}",
+                    8,
+                )
+            )
+
+    # --------------------------------------------------------
+    # WANTS
+    # --------------------------------------------------------
+
+    want_matches = re.findall(
+        r"(?:я\s+)?хочу\s+([^,.!?]+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    for value in want_matches:
+
+        value = value.strip()
+
+        if len(value) >= 3:
+
+            memories.append(
+                (
+                    "goal",
+                    f"Пользователь хочет {value}",
+                    7,
+                )
+            )
+
+    # --------------------------------------------------------
+    # LIVES
+    # --------------------------------------------------------
+
+    live_match = re.search(
+        r"я\s+живу\s+([^,.!?]+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    if live_match:
+
+        value = live_match.group(1).strip()
+
+        if len(value) >= 3:
+
+            memories.append(
+                (
+                    "personal",
+                    f"Пользователь живёт {value}",
+                    9,
+                )
+            )
+
+    # --------------------------------------------------------
+    # WORK
+    # --------------------------------------------------------
+
+    work_match = re.search(
+        r"я\s+работаю\s+([^,.!?]+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    if work_match:
+
+        value = work_match.group(1).strip()
+
+        if len(value) >= 3:
+
+            memories.append(
+                (
+                    "personal",
+                    f"Пользователь работает {value}",
+                    8,
+                )
+            )
+
+    # --------------------------------------------------------
+    # занимается
+    # --------------------------------------------------------
+
+    activity_match = re.search(
+        r"я\s+занимаюсь\s+([^,.!?]+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    if activity_match:
+
+        value = activity_match.group(1).strip()
+
+        if len(value) >= 3:
+
+            memories.append(
+                (
+                    "personal",
+                    f"Пользователь занимается {value}",
+                    7,
+                )
+            )
+
+    # --------------------------------------------------------
+    # FAVORITE
+    # --------------------------------------------------------
+
+    favorite_patterns = [
+        (
+            r"мой\s+любимый\s+([^,.!?]+)",
+            "Любимый {0} пользователя",
+        ),
+        (
+            r"моя\s+любимая\s+([^,.!?]+)",
+            "Любимая {0} пользователя",
+        ),
+    ]
+
+    for pattern, template in favorite_patterns:
+
+        matches = re.findall(
+            pattern,
+            text,
+            flags=re.IGNORECASE,
         )
 
-        return (
-            category,
-            memory,
-            importance,
-        )
+        for value in matches:
 
-    return None
+            value = value.strip()
 
+            if len(value) >= 3:
+
+                memories.append(
+                    (
+                        "preference",
+                        template.format(value),
+                        8,
+                    )
+                )
+
+    return memories
+
+
+def save_automatic_memories(
+    user_id: int,
+    text: str,
+):
+
+    memories = detect_automatic_memories(
+        text
+    )
+
+    saved_count = 0
+
+    for (
+        category,
+        content,
+        importance,
+    ) in memories:
+
+        if save_memory_if_new(
+            user_id=user_id,
+            category=category,
+            content=content,
+            importance=importance,
+        ):
+
+            saved_count += 1
+
+    return saved_count
+
+
+# ============================================================
+# AI INSTRUCTIONS
+# ============================================================
 
 def build_instructions(
     user_id: int,
@@ -579,6 +867,10 @@ def build_instructions(
     return instructions
 
 
+# ============================================================
+# START
+# ============================================================
+
 async def start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -617,6 +909,10 @@ async def start(
     )
 
 
+# ============================================================
+# RESET
+# ============================================================
+
 async def reset(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -638,6 +934,10 @@ async def reset(
         "Важные воспоминания остались."
     )
 
+
+# ============================================================
+# MEMORY
+# ============================================================
 
 async def memory_command(
     update: Update,
@@ -679,6 +979,10 @@ async def memory_command(
     )
 
 
+# ============================================================
+# STATUS
+# ============================================================
+
 async def status_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -710,6 +1014,10 @@ async def status_command(
     )
 
 
+# ============================================================
+# CHAT
+# ============================================================
+
 async def chat(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -736,7 +1044,7 @@ async def chat(
     )
 
     # --------------------------------------------------------
-    # Сохраняем сообщение
+    # SAVE USER MESSAGE
     # --------------------------------------------------------
 
     save_message(
@@ -746,45 +1054,33 @@ async def chat(
     )
 
     # --------------------------------------------------------
-    # Явная память
+    # EXPLICIT MEMORY
     # --------------------------------------------------------
 
-    memory_saved = save_user_memory(
+    explicit_memory_saved = save_user_memory(
         user_id,
         text,
     )
 
     # --------------------------------------------------------
-    # Автоматическая память
+    # AUTOMATIC MEMORY
     # --------------------------------------------------------
 
-    automatic_memory = detect_automatic_memory(
-        text
+    automatic_count = save_automatic_memories(
+        user_id,
+        text,
     )
 
-    if automatic_memory:
-
-        (
-            category,
-            memory,
-            importance,
-        ) = automatic_memory
-
-        save_memory(
-            user_id=user_id,
-            category=category,
-            content=memory,
-            importance=importance,
-        )
+    if automatic_count:
 
         logger.info(
-            "Automatic memory saved for %s: %s",
+            "Saved %s automatic memories for %s",
+            automatic_count,
             user_id,
-            memory,
         )
 
     # --------------------------------------------------------
-    # Эмоциональная реакция
+    # EMOTION
     # --------------------------------------------------------
 
     process_emotion(
@@ -793,10 +1089,10 @@ async def chat(
     )
 
     # --------------------------------------------------------
-    # Явная команда «запомни»
+    # EXPLICIT MEMORY RESPONSE
     # --------------------------------------------------------
 
-    if memory_saved:
+    if explicit_memory_saved:
 
         await update.message.reply_text(
             "Запомнила. 😉"
@@ -805,7 +1101,7 @@ async def chat(
         return
 
     # --------------------------------------------------------
-    # История
+    # HISTORY
     # --------------------------------------------------------
 
     history = get_recent_messages(
@@ -814,7 +1110,7 @@ async def chat(
     )
 
     # --------------------------------------------------------
-    # Инструкции
+    # INSTRUCTIONS
     # --------------------------------------------------------
 
     instructions = build_instructions(
@@ -822,7 +1118,7 @@ async def chat(
     )
 
     # --------------------------------------------------------
-    # OpenAI
+    # OPENAI
     # --------------------------------------------------------
 
     try:
@@ -842,7 +1138,7 @@ async def chat(
             )
 
         # ----------------------------------------------------
-        # Сохраняем ответ
+        # SAVE AI MESSAGE
         # ----------------------------------------------------
 
         save_message(
@@ -852,7 +1148,7 @@ async def chat(
         )
 
         # ----------------------------------------------------
-        # Telegram
+        # TELEGRAM
         # ----------------------------------------------------
 
         await update.message.reply_text(
@@ -871,6 +1167,10 @@ async def chat(
         )
 
 
+# ============================================================
+# ERROR
+# ============================================================
+
 async def error_handler(
     update: object,
     context: ContextTypes.DEFAULT_TYPE,
@@ -882,6 +1182,10 @@ async def error_handler(
         exc_info=context.error,
     )
 
+
+# ============================================================
+# MAIN
+# ============================================================
 
 def main():
 
