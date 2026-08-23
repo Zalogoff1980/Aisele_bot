@@ -72,108 +72,6 @@ def clean_location(location):
 # LOCATION
 # ============================================================
 
-def geocode_location(location):
-    location = clean_location(location)
-
-    if not location:
-        return None
-
-    # Сначала обычный поиск.
-    # Если пользователь указал регион/страну,
-    # Open-Meteo сам умеет использовать это как уточнение.
-    attempts = [
-        location,
-    ]
-
-    # Дополнительные варианты для русских окончаний.
-    # Например: "в Воронеже" уже должен быть очищен,
-    # но иногда распознавание голоса оставляет лишние слова.
-    simplified = re.sub(
-        r"^(в|во|на|из|для)\s+",
-        "",
-        location,
-        flags=re.IGNORECASE,
-    ).strip()
-
-    if simplified and simplified.lower() != location.lower():
-        attempts.append(simplified)
-
-    for query_location in attempts:
-
-        try:
-            data = get_json(
-                GEOCODING_URL,
-                {
-                    "name": query_location,
-                    "count": 10,
-                    "language": "ru",
-                    "format": "json",
-                },
-            )
-
-        except (
-            URLError,
-            HTTPError,
-            TimeoutError,
-            OSError,
-            ValueError,
-            json.JSONDecodeError,
-        ):
-            continue
-
-        if not isinstance(data, dict):
-            continue
-
-        results = data.get(
-            "results",
-            [],
-        )
-
-        if not results:
-            continue
-
-        target = query_location.lower().strip()
-
-        # ----------------------------------------------------
-        # 1. Точное совпадение названия
-        # ----------------------------------------------------
-
-        for result in results:
-
-            name = str(
-                result.get("name", "")
-            ).strip().lower()
-
-            if name == target:
-                return result
-
-        # ----------------------------------------------------
-        # 2. Совпадение без диакритики/лишних пробелов
-        # ----------------------------------------------------
-
-        normalized_target = re.sub(
-            r"\s+",
-            " ",
-            target,
-        )
-
-        for result in results:
-
-            name = str(
-                result.get("name", "")
-            ).strip().lower()
-
-            name = re.sub(
-                r"\s+",
-                " ",
-                name,
-            )
-
-            if name == normalized_target:
-                return result
-
-        # ----------------------------------------------------
-        # 3. Если точного совпадения нет —
         #    выбираем наиболее населённый вариант.
         # ----------------------------------------------------
 
@@ -201,6 +99,8 @@ def geocode_location(location):
         return results[0]
 
     return None
+
+        
 
 
 # ============================================================
