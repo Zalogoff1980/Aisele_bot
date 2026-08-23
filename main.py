@@ -969,7 +969,7 @@ def transcribe_voice(audio_bytes):
     update,
     context,
     text,
-):
+
 
     if not update.effective_user:
         return
