@@ -127,7 +127,7 @@ def get_last_assistant_reply(
 
 TTS_MODEL = "gpt-4o-mini-tts"
 
-TTS_VOICE = "shimmer"
+TTS_VOICE = "cedar"
 
 
 # ============================================================
