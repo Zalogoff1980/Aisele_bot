@@ -377,3 +377,18 @@ async def text_handler_with_voice(
         update,
         context,
         )
+    
+# ============================================================
+# COMPATIBILITY FOR run.py
+# ============================================================
+
+async def smart_text_handler(
+    update,
+    context,
+):
+    from main import text_handler
+
+    await text_handler(
+        update,
+        context,
+    )
