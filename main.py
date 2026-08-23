@@ -45,6 +45,13 @@ from web_search import (
     needs_web_search,
 )
 
+from weather import (
+    is_weather_request,
+    extract_weather_location,
+    get_weather,
+    format_weather,
+)
+
 
 DB_PATH = "aisele.db"
 
@@ -959,7 +966,6 @@ def transcribe_voice(audio_bytes):
 # COMMON ANSWER
 # ============================================================
 
-async def answer_text(
     update,
     context,
     text,
@@ -1028,6 +1034,7 @@ async def answer_text(
     )
 
     try:
+
 
                 # ----------------------------------------------------
         # WEB SEARCH
