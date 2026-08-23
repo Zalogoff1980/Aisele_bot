@@ -860,7 +860,7 @@ def generate_image_reply(
     user_id,
     image_bytes,
     caption="",
-):
+
 
     (
         memory_text,
