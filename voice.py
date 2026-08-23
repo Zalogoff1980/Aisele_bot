@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 TTS_MODEL = "gpt-4o-mini-tts"
 
 # Женский голос
-TTS_VOICE = "coral"
+TTS_VOICE = "marin"
 
 # Немного медленнее стандартного — естественнее для русского
 TTS_SPEED = 0.96
