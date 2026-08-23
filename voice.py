@@ -1,7 +1,7 @@
 import io
 import logging
 import os
-import tempfile
+import re
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -15,6 +15,9 @@ from main import (
     transcribe_voice,
     generate_text_reply,
 )
+
+from memory import get_recent_messages
+
 
 logger = logging.getLogger(__name__)
 
@@ -31,16 +34,13 @@ ELEVENLABS_VOICE_ID = os.getenv(
     "ELEVENLABS_VOICE_ID"
 )
 
-ELEVENLABS_MODEL = (
-    "eleven_multilingual_v2"
-)
+ELEVENLABS_MODEL = "eleven_multilingual_v2"
 
 
 if not ELEVENLABS_API_KEY:
     raise RuntimeError(
         "ELEVENLABS_API_KEY is not configured"
     )
-
 
 if not ELEVENLABS_VOICE_ID:
     raise RuntimeError(
@@ -54,19 +54,138 @@ eleven_client = ElevenLabs(
 
 
 # ============================================================
-# ГОЛОС АЙСЕЛЬ
+# НАСТРОЙКИ ГОЛОСА
 # ============================================================
 
 VOICE_SETTINGS = {
-    "stability": 0.45,
-    "similarity_boost": 0.82,
-    "style": 0.35,
+    "stability": 0.42,
+    "similarity_boost": 0.85,
+    "style": 0.40,
     "use_speaker_boost": True,
 }
 
 
 # ============================================================
-# ГЕНЕРАЦИЯ ГОЛОСА
+# НОРМАЛИЗАЦИЯ ТЕКСТА
+# ============================================================
+
+def normalize_command(text):
+    """
+    Приводит команду к нормальному виду.
+
+    Например:
+
+    "Повтори это голосом!"
+    "повтори это голосом"
+    "ПОвтори   это   голосом"
+
+    превратятся в одно и то же.
+    """
+
+    text = text or ""
+
+    text = text.lower().strip()
+
+    text = text.replace("ё", "е")
+
+    text = re.sub(
+        r"[.,!?;:—–\-\"'«»()]+",
+        " ",
+        text,
+    )
+
+    text = re.sub(
+        r"\s+",
+        " ",
+        text,
+    )
+
+    return text.strip()
+
+
+# ============================================================
+# КОМАНДЫ ГОЛОСА
+# ============================================================
+
+VOICE_COMMANDS = {
+    "ответь голосом",
+    "ответь это голосом",
+    "ответь своим голосом",
+    "скажи голосом",
+    "скажи это голосом",
+    "озвучь ответ",
+    "озвучь это",
+    "озвучь это голосом",
+    "озвучь свой ответ",
+    "озвучь свой последний ответ",
+    "повтори голосом",
+    "повтори это голосом",
+    "повтори своим голосом",
+    "повтори это своим голосом",
+    "повтори свой ответ голосом",
+    "повтори свой последний ответ голосом",
+    "повтори свой последний ответ своим голосом",
+}
+
+
+def is_voice_command(text):
+    normalized = normalize_command(text)
+
+    if normalized in VOICE_COMMANDS:
+        return True
+
+    # На случай небольшой разницы в формулировке.
+    patterns = (
+        r"^повтори.*голосом$",
+        r"^повтори.*своим голосом$",
+        r"^озвучь.*ответ$",
+        r"^озвучь.*голосом$",
+        r"^скажи.*голосом$",
+        r"^ответь.*голосом$",
+    )
+
+    for pattern in patterns:
+        if re.match(
+            pattern,
+            normalized,
+            re.IGNORECASE,
+        ):
+            return True
+
+    return False
+
+
+# ============================================================
+# ПОИСК ПОСЛЕДНЕГО ОТВЕТА АЙСЕЛЬ
+# ============================================================
+
+def get_last_assistant_message(user_id):
+
+    messages = get_recent_messages(
+        user_id,
+        limit=50,
+    )
+
+    for message in reversed(messages):
+
+        role = message.get("role")
+
+        content = (
+            message.get("content")
+            or ""
+        ).strip()
+
+        if (
+            role == "assistant"
+            and content
+        ):
+            return content
+
+    return None
+
+
+# ============================================================
+# ELEVENLABS TTS
 # ============================================================
 
 def synthesize_speech(text):
@@ -80,13 +199,16 @@ def synthesize_speech(text):
             "Empty text for TTS"
         )
 
-    # ElevenLabs хорошо работает с короткими
-    # разговорными сообщениями.
     if len(text) > 4500:
         text = (
             text[:4490]
             + "..."
         )
+
+    logger.info(
+        "ElevenLabs TTS: %s",
+        text[:120],
+    )
 
     audio_stream = (
         eleven_client.text_to_speech.convert(
@@ -111,7 +233,7 @@ def synthesize_speech(text):
 
 
 # ============================================================
-# ОТПРАВКА ГОЛОСА В TELEGRAM
+# ОТПРАВКА ГОЛОСА
 # ============================================================
 
 async def send_voice_reply(
@@ -135,7 +257,7 @@ async def send_voice_reply(
 
 
 # ============================================================
-# ГОЛОСОВОЙ HANDLER
+# ГОЛОСОВОЕ СООБЩЕНИЕ ПОЛЬЗОВАТЕЛЯ
 # ============================================================
 
 async def voice_handler(
@@ -163,7 +285,7 @@ async def voice_handler(
             return
 
         # ----------------------------------------------------
-        # TELEGRAM → AUDIO
+        # TELEGRAM -> AUDIO
         # ----------------------------------------------------
 
         telegram_file = (
@@ -177,7 +299,7 @@ async def voice_handler(
         )
 
         # ----------------------------------------------------
-        # AUDIO → TEXT
+        # AUDIO -> TEXT
         # ----------------------------------------------------
 
         text = transcribe_voice(
@@ -200,7 +322,7 @@ async def voice_handler(
         )
 
         # ----------------------------------------------------
-        # СОХРАНЯЕМ СООБЩЕНИЕ
+        # ОБЫЧНАЯ ЛОГИКА АЙСЕЛЬ
         # ----------------------------------------------------
 
         ensure_user(
@@ -220,7 +342,7 @@ async def voice_handler(
         )
 
         # ----------------------------------------------------
-        # OPENAI → ОТВЕТ АЙСЕЛЬ
+        # OPENAI -> ОТВЕТ
         # ----------------------------------------------------
 
         answer = generate_text_reply(
@@ -246,7 +368,7 @@ async def voice_handler(
         )
 
         # ----------------------------------------------------
-        # ELEVENLABS → ГОЛОС
+        # ELEVENLABS -> ГОЛОС
         # ----------------------------------------------------
 
         await send_voice_reply(
@@ -268,10 +390,10 @@ async def voice_handler(
 
 
 # ============================================================
-# ТЕКСТОВЫЙ HANDLER
+# ТЕКСТ + КОМАНДЫ ОЗВУЧКИ
 # ============================================================
 
-async def text_handler_with_voice(
+async def smart_text_handler(
     update,
     context,
 ):
@@ -282,70 +404,41 @@ async def text_handler_with_voice(
     if not update.message.text:
         return
 
-    text = update.message.text.strip()
+    text = (
+        update.message.text
+        or ""
+    ).strip()
 
     if not text:
         return
 
-    # --------------------------------------------------------
-    # КОМАНДЫ ОЗВУЧКИ
-    # --------------------------------------------------------
+    logger.info(
+        "Text command received: %r",
+        text,
+    )
 
-    voice_commands = (
-    "ответь голосом",
-    "ответь это голосом",
-    "скажи голосом",
-    "скажи это голосом",
-    "озвучь ответ",
-    "озвучь это",
-    "озвучь это голосом",
-    "повтори голосом",
-    "повтори это голосом",
-    "повтори свой ответ голосом",
-    "повтори свой последний ответ голосом",
-     )
+    # ========================================================
+    # КОМАНДА ПОВТОРИТЬ ГОЛОСОМ
+    # ========================================================
 
-    lower_text = text.lower()
+    if is_voice_command(text):
 
-    if any(
-        command in lower_text
-        for command in voice_commands
-    ):
+        logger.info(
+            "VOICE REPEAT COMMAND DETECTED: %r",
+            text,
+        )
 
         try:
 
-            # Берём последний ответ из БД.
-            from memory import (
-                get_recent_messages
+            user_id = (
+                update.effective_user.id
             )
 
-            messages = (
-                get_recent_messages(
-                    update.effective_user.id,
-                    limit=20,
+            last_answer = (
+                get_last_assistant_message(
+                    user_id
                 )
             )
-
-            last_answer = None
-
-            for message in reversed(
-                messages
-            ):
-
-                if (
-                    message.get("role")
-                    == "assistant"
-                ):
-
-                    last_answer = (
-                        message.get(
-                            "content"
-                        )
-                        or ""
-                    ).strip()
-
-                    if last_answer:
-                        break
 
             if not last_answer:
 
@@ -354,6 +447,11 @@ async def text_handler_with_voice(
                 )
 
                 return
+
+            logger.info(
+                "Repeating assistant message: %s",
+                last_answer[:150],
+            )
 
             await send_voice_reply(
                 update,
@@ -365,18 +463,19 @@ async def text_handler_with_voice(
         except Exception:
 
             logger.exception(
-                "Voice command failed"
+                "Voice repeat failed"
             )
 
             await update.message.reply_text(
-                "Не получилось озвучить."
+                "Не получилось озвучить "
+                "мой последний ответ."
             )
 
             return
 
-    # --------------------------------------------------------
+    # ========================================================
     # ОБЫЧНЫЙ ТЕКСТ
-    # --------------------------------------------------------
+    # ========================================================
 
     from main import text_handler
 
@@ -384,18 +483,3 @@ async def text_handler_with_voice(
         update,
         context,
         )
-    
-# ============================================================
-# COMPATIBILITY FOR run.py
-# ============================================================
-
-async def smart_text_handler(
-    update,
-    context,
-):
-    from main import text_handler
-
-    await text_handler(
-        update,
-        context,
-    )
