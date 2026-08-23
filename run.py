@@ -15,11 +15,13 @@ from main import (
     start_command,
     memory_command,
     clear_command,
-    text_handler,
     photo_handler,
 )
 
-from voice import voice_handler
+from voice import (
+    voice_handler,
+    smart_text_handler,
+)
 
 
 logging.basicConfig(
@@ -29,9 +31,7 @@ logging.basicConfig(
 
 
 def main():
-
     init_database()
-
     init_visual_context()
 
     application = (
@@ -69,11 +69,6 @@ def main():
         )
     )
 
-    # ==========================================
-    # ГОЛОСОВЫЕ СООБЩЕНИЯ
-    # Используем новый voice.py
-    # ==========================================
-
     application.add_handler(
         MessageHandler(
             filters.VOICE,
@@ -81,16 +76,20 @@ def main():
         )
     )
 
+    # Текстовый обработчик.
+    # Сначала проверяет команды вроде:
+    # «озвучь свой последний ответ»
+    # «повтори голосом»
+    # «переведи своё голосовое в текст»
+    # и только потом отправляет обычный текст в AI.
     application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
-            text_handler,
+            smart_text_handler,
         )
     )
 
-    logging.info(
-        "Aisele started"
-    )
+    logging.info("Aisele started")
 
     application.run_polling(
         drop_pending_updates=False
