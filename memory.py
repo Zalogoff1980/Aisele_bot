@@ -16,7 +16,12 @@ def get_connection():
     return connection
 
 
+# ============================================================
+# DATABASE
+# ============================================================
+
 def init_database():
+
     with get_connection() as connection:
 
         connection.execute("""
@@ -60,15 +65,47 @@ def init_database():
             )
         """)
 
+        # ----------------------------------------------------
+        # Совместимость со старой БД
+        # ----------------------------------------------------
 
-def ensure_user(user_id, telegram_name=None):
+        columns = connection.execute(
+            "PRAGMA table_info(users)"
+        ).fetchall()
+
+        column_names = {
+            column["name"]
+            for column in columns
+        }
+
+        if "display_name" not in column_names:
+
+            connection.execute("""
+                ALTER TABLE users
+                ADD COLUMN display_name TEXT
+            """)
+
+
+# ============================================================
+# USERS
+# ============================================================
+
+def ensure_user(
+    user_id,
+    telegram_name=None,
+    display_name=None,
+):
+
     now = now_iso()
 
     with get_connection() as connection:
 
         user = connection.execute(
             """
-            SELECT user_id
+            SELECT
+                user_id,
+                telegram_name,
+                display_name
             FROM users
             WHERE user_id = ?
             """,
@@ -83,14 +120,16 @@ def ensure_user(user_id, telegram_name=None):
                 (
                     user_id,
                     telegram_name,
+                    display_name,
                     created_at,
                     last_seen
                 )
-                VALUES (?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 (
                     user_id,
                     telegram_name,
+                    display_name,
                     now,
                     now,
                 ),
@@ -116,27 +155,137 @@ def ensure_user(user_id, telegram_name=None):
 
         else:
 
+            # ------------------------------------------------
+            # Не затираем уже сохранённое имя пустым значением
+            # ------------------------------------------------
+
+            new_display_name = (
+                display_name
+                if display_name
+                else user["display_name"]
+            )
+
             connection.execute(
                 """
                 UPDATE users
                 SET
                     telegram_name = ?,
+                    display_name = ?,
                     last_seen = ?
                 WHERE user_id = ?
                 """,
                 (
                     telegram_name,
+                    new_display_name,
                     now,
                     user_id,
                 ),
             )
 
 
+def get_user(
+    user_id,
+):
+
+    with get_connection() as connection:
+
+        row = connection.execute(
+            """
+            SELECT
+                user_id,
+                telegram_name,
+                display_name,
+                created_at,
+                last_seen
+            FROM users
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return {
+        "user_id": row["user_id"],
+        "telegram_name": row["telegram_name"],
+        "display_name": row["display_name"],
+        "created_at": row["created_at"],
+        "last_seen": row["last_seen"],
+    }
+
+
+def get_display_name(
+    user_id,
+):
+
+    user = get_user(
+        user_id
+    )
+
+    if not user:
+        return None
+
+    name = (
+        user.get("display_name")
+        or ""
+    ).strip()
+
+    if not name:
+        return None
+
+    return name
+
+
+def set_display_name(
+    user_id,
+    display_name,
+):
+
+    display_name = (
+        display_name or ""
+    ).strip()
+
+    if not display_name:
+        return False
+
+    if len(display_name) > 100:
+        display_name = display_name[:100]
+
+    with get_connection() as connection:
+
+        cursor = connection.execute(
+            """
+            UPDATE users
+            SET display_name = ?
+            WHERE user_id = ?
+            """,
+            (
+                display_name,
+                user_id,
+            ),
+        )
+
+        return cursor.rowcount > 0
+
+
+# ============================================================
+# MESSAGES
+# ============================================================
+
 def save_message(
     user_id,
     role,
     content,
 ):
+
+    content = (
+        content or ""
+    ).strip()
+
+    if not content:
+        return False
+
     with get_connection() as connection:
 
         connection.execute(
@@ -158,8 +307,13 @@ def save_message(
             ),
         )
 
+    return True
 
-def clear_messages(user_id):
+
+def clear_messages(
+    user_id,
+):
+
     with get_connection() as connection:
 
         connection.execute(
@@ -175,11 +329,14 @@ def get_recent_messages(
     user_id,
     limit=20,
 ):
+
     with get_connection() as connection:
 
         rows = connection.execute(
             """
-            SELECT role, content
+            SELECT
+                role,
+                content
             FROM messages
             WHERE user_id = ?
             ORDER BY id DESC
@@ -191,7 +348,9 @@ def get_recent_messages(
             ),
         ).fetchall()
 
-    rows = list(reversed(rows))
+    rows = list(
+        reversed(rows)
+    )
 
     return [
         {
@@ -202,20 +361,20 @@ def get_recent_messages(
     ]
 
 
+# ============================================================
+# MEMORIES
+# ============================================================
+
 def save_memory(
     user_id,
     category,
     content,
     importance=5,
 ):
-    """
-    Сохраняет важное воспоминание.
 
-    Если точно такое воспоминание уже существует,
-    новая копия не создаётся.
-    """
-
-    content = content.strip()
+    content = (
+        content or ""
+    ).strip()
 
     if not content:
         return False
@@ -232,7 +391,8 @@ def save_memory(
             SELECT id
             FROM memories
             WHERE user_id = ?
-              AND LOWER(TRIM(content)) = LOWER(TRIM(?))
+              AND LOWER(TRIM(content)) =
+                  LOWER(TRIM(?))
             LIMIT 1
             """,
             (
@@ -242,11 +402,12 @@ def save_memory(
         ).fetchone()
 
         if existing is not None:
+
             connection.execute(
                 """
                 UPDATE memories
-                SET
-                    importance = MAX(importance, ?)
+                SET importance =
+                    MAX(importance, ?)
                 WHERE id = ?
                 """,
                 (
@@ -285,6 +446,7 @@ def get_memories(
     user_id,
     limit=30,
 ):
+
     with get_connection() as connection:
 
         rows = connection.execute(
@@ -318,9 +480,13 @@ def delete_memory(
     user_id,
     content,
 ):
-    """
-    Удаляет конкретное воспоминание.
-    """
+
+    content = (
+        content or ""
+    ).strip()
+
+    if not content:
+        return False
 
     with get_connection() as connection:
 
@@ -328,21 +494,21 @@ def delete_memory(
             """
             DELETE FROM memories
             WHERE user_id = ?
-              AND LOWER(TRIM(content)) = LOWER(TRIM(?))
+              AND LOWER(TRIM(content)) =
+                  LOWER(TRIM(?))
             """,
             (
                 user_id,
-                content.strip(),
+                content,
             ),
         )
 
         return cursor.rowcount > 0
 
 
-def clear_memories(user_id):
-    """
-    Полностью очищает долговременную память пользователя.
-    """
+def clear_memories(
+    user_id,
+):
 
     with get_connection() as connection:
 
@@ -355,7 +521,14 @@ def clear_memories(user_id):
         )
 
 
-def get_relationship(user_id):
+# ============================================================
+# RELATIONSHIP
+# ============================================================
+
+def get_relationship(
+    user_id,
+):
+
     with get_connection() as connection:
 
         row = connection.execute(
@@ -371,6 +544,7 @@ def get_relationship(user_id):
         ).fetchone()
 
     if row is None:
+
         return {
             "trust": 0,
             "closeness": 0,
@@ -390,7 +564,10 @@ def update_relationship(
     closeness=None,
     mood=None,
 ):
-    current = get_relationship(user_id)
+
+    current = get_relationship(
+        user_id
+    )
 
     trust = (
         current["trust"]
@@ -424,19 +601,28 @@ def update_relationship(
 
         connection.execute(
             """
-            UPDATE relationship
-            SET
-                trust = ?,
-                closeness = ?,
-                mood = ?,
-                updated_at = ?
-            WHERE user_id = ?
+            INSERT INTO relationship
+            (
+                user_id,
+                trust,
+                closeness,
+                mood,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+
+            ON CONFLICT(user_id)
+            DO UPDATE SET
+                trust = excluded.trust,
+                closeness = excluded.closeness,
+                mood = excluded.mood,
+                updated_at = excluded.updated_at
             """,
             (
+                user_id,
                 trust,
                 closeness,
                 mood,
                 now_iso(),
-                user_id,
             ),
-    )
+        )
