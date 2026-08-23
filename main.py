@@ -40,6 +40,11 @@ from initiative import (
     save_initiative,
 )
 
+from web_search import (
+    web_search_reply,
+    needs_web_search,
+)
+
 
 DB_PATH = "aisele.db"
 
@@ -1023,6 +1028,41 @@ async def answer_text(
     )
 
     try:
+
+                # ----------------------------------------------------
+        # WEB SEARCH
+        # ----------------------------------------------------
+
+        if needs_web_search(text):
+
+            logger.info(
+                "Web search requested for user %s: %s",
+                user.id,
+                text,
+            )
+
+            answer = web_search_reply(
+                text
+            )
+
+            if not answer:
+                answer = (
+                    "Я поискала, но нормального "
+                    "ответа не нашла."
+                )
+
+            save_message(
+                user.id,
+                "assistant",
+                answer,
+            )
+
+            await update.message.reply_text(
+                answer,
+                disable_web_page_preview=True,
+            )
+
+            return
 
         if visual:
 
