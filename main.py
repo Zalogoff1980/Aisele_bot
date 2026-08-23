@@ -7,7 +7,9 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from openai import OpenAI
+
 from telegram import Update
+
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -36,7 +38,6 @@ from memory import (
 
 from initiative import (
     init_initiative,
-    get_last_initiative,
     save_initiative,
 )
 
@@ -85,14 +86,6 @@ AISELE_PERSONA = """
 Тебя зовут Айсель. Ты AI-компаньон с самостоятельным характером.
 
 Говори по-русски естественно, как человек в обычном Telegram-чате.
-
-Обращайся к пользователю на «ты», если он сам не попросил иначе.
-
-Если в памяти есть настоящее имя пользователя — можешь иногда
-обращаться по имени естественно, но не вставляй имя в каждый ответ.
-
-Не обращайся к пользователю по имени, если имя не сохранено
-в памяти конкретного пользователя.
 
 Не разговаривай как оператор поддержки.
 
@@ -234,48 +227,6 @@ AISELE_PERSONA = """
 
 Если информации нет в памяти или истории,
 не делай вид, что она есть.
-
-
-============================================================
-ПОГОДА
-============================================================
-
-Если пользователь спрашивает погоду, используй специальный
-инструмент погоды, а не придумывай данные.
-
-Если пользователь продолжает разговор о погоде словами:
-
-«А завтра?»
-«А послезавтра?»
-«А в другом городе?»
-«А в Москве?»
-«А в Воронеже?»
-
-учитывай предыдущий погодный контекст.
-
-Если город явно указан — используй его.
-
-Если город не указан, используй последний город,
-для которого пользователь недавно спрашивал погоду.
-
-Если погодного контекста нет — попроси назвать город.
-
-Не говори, что у тебя нет доступа к реальной погоде,
-если данные успешно получены через погодный сервис.
-
-
-============================================================
-МНОГОПОЛЬЗОВАТЕЛЬСКИЙ РЕЖИМ
-============================================================
-
-У каждого пользователя отдельная память,
-отдельная история сообщений,
-отдельные отношения и отдельный погодный контекст.
-
-Никогда не используй данные другого пользователя.
-
-Никогда не обращайся к пользователю именем,
-которое относится к другому пользователю.
 """
 
 
@@ -407,9 +358,7 @@ def save_weather_context(
     location,
 ):
 
-    location = (
-        location or ""
-    ).strip()
+    location = (location or "").strip()
 
     if not location:
         return
@@ -476,6 +425,371 @@ def clear_weather_context(
 
 
 # ============================================================
+# WEATHER RELATIVE REQUEST
+# ============================================================
+
+def get_relative_weather_day(text):
+
+    normalized = (
+        text or ""
+    ).lower().strip()
+
+    normalized = re.sub(
+        r"[?!.,]+$",
+        "",
+        normalized,
+    ).strip()
+
+    if normalized in (
+        "сегодня",
+        "а сегодня",
+        "на сегодня",
+    ):
+        return 0
+
+    if normalized in (
+        "завтра",
+        "а завтра",
+        "на завтра",
+    ):
+        return 1
+
+    if normalized in (
+        "послезавтра",
+        "а послезавтра",
+        "на послезавтра",
+    ):
+        return 2
+
+    return None
+
+
+def format_relative_weather(
+    data,
+    day_index,
+):
+
+    if not data.get("success"):
+
+        return data.get(
+            "error",
+            "Не удалось получить погоду.",
+        )
+
+    location = data.get(
+        "location",
+        {},
+    )
+
+    daily = data.get(
+        "daily",
+        {},
+    )
+
+    dates = daily.get(
+        "time",
+        [],
+    )
+
+    codes = daily.get(
+        "weather_code",
+        [],
+    )
+
+    max_temps = daily.get(
+        "temperature_2m_max",
+        [],
+    )
+
+    min_temps = daily.get(
+        "temperature_2m_min",
+        [],
+    )
+
+    precipitation_probability = daily.get(
+        "precipitation_probability_max",
+        [],
+    )
+
+    precipitation_sum = daily.get(
+        "precipitation_sum",
+        [],
+    )
+
+    if day_index >= len(dates):
+
+        return (
+            "На этот день у меня пока "
+            "нет прогноза."
+        )
+
+    name = location.get(
+        "name",
+        "этом городе",
+    )
+
+    country = location.get(
+        "country",
+        "",
+    )
+
+    region = location.get(
+        "region",
+        "",
+    )
+
+    place_parts = [name]
+
+    if region and region != name:
+
+        place_parts.append(
+            region
+        )
+
+    if country:
+
+        place_parts.append(
+            country
+        )
+
+    place = ", ".join(
+        place_parts
+    )
+
+    if day_index == 0:
+
+        title = "сегодня"
+
+    elif day_index == 1:
+
+        title = "завтра"
+
+    else:
+
+        title = "послезавтра"
+
+    parts = [
+        f"Погода в {place} на {title}:"
+    ]
+
+    if day_index < len(codes):
+
+        code = codes[day_index]
+
+        try:
+            from weather import weather_description
+
+            description = weather_description(
+                code
+            )
+
+        except Exception:
+
+            description = ""
+
+        if description:
+
+            parts.append(
+                f"{description.capitalize()}."
+            )
+
+    if (
+        day_index < len(min_temps)
+        and day_index < len(max_temps)
+    ):
+
+        minimum = min_temps[day_index]
+        maximum = max_temps[day_index]
+
+        if (
+            minimum is not None
+            and maximum is not None
+        ):
+
+            parts.append(
+                f"Температура: "
+                f"{round(minimum)}…"
+                f"{round(maximum)}°C."
+            )
+
+    if day_index < len(
+        precipitation_probability
+    ):
+
+        probability = (
+            precipitation_probability[
+                day_index
+            ]
+        )
+
+        if probability is not None:
+
+            parts.append(
+                f"Вероятность осадков: "
+                f"{round(probability)}%."
+            )
+
+    if day_index < len(
+        precipitation_sum
+    ):
+
+        precipitation = (
+            precipitation_sum[
+                day_index
+            ]
+        )
+
+        if precipitation is not None:
+
+            parts.append(
+                f"Осадки: около "
+                f"{round(float(precipitation), 1)} мм."
+            )
+
+    return "\n".join(parts)
+
+
+def weather_answer(
+    user_id,
+    text,
+):
+
+    text = (
+        text or ""
+    ).strip()
+
+    if not text:
+        return None
+
+    relative_day = get_relative_weather_day(
+        text
+    )
+
+    explicit_weather = is_weather_request(
+        text
+    )
+
+    # --------------------------------------------------------
+    # Если это не погода и не «завтра/послезавтра»
+    # --------------------------------------------------------
+
+    if (
+        not explicit_weather
+        and relative_day is None
+    ):
+
+        return None
+
+    # --------------------------------------------------------
+    # Пытаемся найти город в текущем сообщении
+    # --------------------------------------------------------
+
+    location = extract_weather_location(
+        text
+    )
+
+    # --------------------------------------------------------
+    # Если город не указан, но это относительный запрос,
+    # берём последний город ЭТОГО пользователя
+    # --------------------------------------------------------
+
+    if (
+        not location
+        and relative_day is not None
+    ):
+
+        location = get_weather_context(
+            user_id
+        )
+
+    # --------------------------------------------------------
+    # Города нет вообще
+    # --------------------------------------------------------
+
+    if not location:
+
+        return (
+            "Скажи город или регион — например: "
+            "«погода в Воронеже»."
+        )
+
+    try:
+
+        # ----------------------------------------------------
+        # Новый город сохраняем
+        # ----------------------------------------------------
+
+        explicit_location = (
+            extract_weather_location(
+                text
+            )
+        )
+
+        if explicit_location:
+
+            save_weather_context(
+                user_id,
+                explicit_location,
+            )
+
+        # ----------------------------------------------------
+        # Получаем прогноз
+        # ----------------------------------------------------
+
+        data = get_weather(
+            location,
+            days=7,
+        )
+
+        if not data:
+
+            return (
+                f"Не смогла получить актуальную "
+                f"погоду для {location}."
+            )
+
+        if not data.get("success"):
+
+            return data.get(
+                "error",
+                f"Не смогла получить погоду "
+                f"для {location}.",
+            )
+
+        # ----------------------------------------------------
+        # «А завтра?»
+        # ----------------------------------------------------
+
+        if relative_day is not None:
+
+            return format_relative_weather(
+                data,
+                relative_day,
+            )
+
+        # ----------------------------------------------------
+        # Обычный запрос погоды
+        # ----------------------------------------------------
+
+        return format_weather(
+            data
+        )
+
+    except Exception:
+
+        logger.exception(
+            "Weather request failed for user %s, location=%s",
+            user_id,
+            location,
+        )
+
+        return (
+            "У меня сейчас что-то с погодой случилось. "
+            "Попробуй ещё раз."
+        )
+
+
+# ============================================================
 # RELATIONSHIP / EMOTION
 # ============================================================
 
@@ -484,7 +798,9 @@ def process_emotion(
     message,
 ):
 
-    relationship = get_relationship(user_id)
+    relationship = get_relationship(
+        user_id
+    )
 
     text = (
         message or ""
@@ -632,7 +948,9 @@ def memory_exists(
     content,
 ):
 
-    target = normalize_memory(content)
+    target = normalize_memory(
+        content
+    )
 
     memories = get_memories(
         user_id,
@@ -719,7 +1037,9 @@ def save_user_memory(
     text,
 ):
 
-    memory_text = detect_memory_request(text)
+    memory_text = detect_memory_request(
+        text
+    )
 
     if not memory_text:
         return False
@@ -876,7 +1196,9 @@ def generate_text_reply(
         },
     ]
 
-    messages.extend(recent)
+    messages.extend(
+        recent
+    )
 
     messages.append(
         {
@@ -1080,7 +1402,7 @@ def generate_image_reply(
 
 
 # ============================================================
-# VOICE TRANSCRIPTION
+# VOICE
 # ============================================================
 
 def transcribe_voice(
@@ -1107,502 +1429,6 @@ def transcribe_voice(
         )
         or ""
     ).strip()
-
-
-# ============================================================
-# WEATHER HELPERS
-# ============================================================
-
-def clean_weather_location(
-    location,
-):
-
-    location = (
-        location or ""
-    ).strip()
-
-    location = re.sub(
-        r"^(?:в|во|для|на)\s+",
-        "",
-        location,
-        flags=re.IGNORECASE,
-    ).strip()
-
-    location = re.sub(
-        r"^город(?:е|а)?\s+",
-        "",
-        location,
-        flags=re.IGNORECASE,
-    ).strip()
-
-    location = re.sub(
-        r"^г\.\s*",
-        "",
-        location,
-        flags=re.IGNORECASE,
-    ).strip()
-
-    location = re.sub(
-        r"\s+(?:сегодня|сейчас|завтра|послезавтра)$",
-        "",
-        location,
-        flags=re.IGNORECASE,
-    ).strip()
-
-    location = re.sub(
-        r"[?.!,]+$",
-        "",
-        location,
-    ).strip()
-
-    return location
-
-
-def extract_weather_day_offset(
-    text,
-):
-
-    text = (
-        text or ""
-    ).lower()
-
-    if "послезавтра" in text:
-        return 2
-
-    if "завтра" in text:
-        return 1
-
-    return 0
-
-
-def is_weather_followup(
-    text,
-):
-
-    text = (
-        text or ""
-    ).strip().lower()
-
-    followups = (
-        "а завтра",
-        "а послезавтра",
-        "завтра",
-        "послезавтра",
-        "а сегодня",
-        "а сейчас",
-        "а в ",
-        "а во ",
-        "а на ",
-    )
-
-    return any(
-        text.startswith(item)
-        for item in followups
-    )
-
-
-def extract_weather_followup_location(
-    text,
-):
-
-    text = (
-        text or ""
-    ).strip()
-
-    patterns = (
-
-        r"^а\s+(?:в|во|на)\s+(.+)$",
-
-        r"^какая\s+погода\s+(?:в|во|на)\s+(.+)$",
-
-        r"^погода\s+(?:в|во|на)\s+(.+)$",
-
-    )
-
-    for pattern in patterns:
-
-        match = re.search(
-            pattern,
-            text,
-            re.IGNORECASE,
-        )
-
-        if match:
-
-            location = clean_weather_location(
-                match.group(1)
-            )
-
-            if location:
-                return location
-
-    return None
-
-
-def get_weather_day_data(
-    data,
-    day_offset,
-):
-
-    if not data:
-        return None
-
-    daily = data.get(
-        "daily",
-        {},
-    )
-
-    dates = daily.get(
-        "time",
-        [],
-    )
-
-    max_temps = daily.get(
-        "temperature_2m_max",
-        [],
-    )
-
-    min_temps = daily.get(
-        "temperature_2m_min",
-        [],
-    )
-
-    probabilities = daily.get(
-        "precipitation_probability_max",
-        [],
-    )
-
-    precipitation = daily.get(
-        "precipitation_sum",
-        [],
-    )
-
-    codes = daily.get(
-        "weather_code",
-        [],
-    )
-
-    if day_offset < 0:
-        day_offset = 0
-
-    if day_offset >= len(dates):
-        return None
-
-    index = day_offset
-
-    return {
-        "date": dates[index],
-
-        "max_temp": (
-            max_temps[index]
-            if index < len(max_temps)
-            else None
-        ),
-
-        "min_temp": (
-            min_temps[index]
-            if index < len(min_temps)
-            else None
-        ),
-
-        "probability": (
-            probabilities[index]
-            if index < len(probabilities)
-            else None
-        ),
-
-        "precipitation": (
-            precipitation[index]
-            if index < len(precipitation)
-            else None
-        ),
-
-        "code": (
-            codes[index]
-            if index < len(codes)
-            else None
-        ),
-    }
-
-
-def weather_description_local(
-    code,
-):
-
-    descriptions = {
-
-        0: "ясно",
-
-        1: "преимущественно ясно",
-
-        2: "переменная облачность",
-
-        3: "пасмурно",
-
-        45: "туман",
-
-        48: "изморозь и туман",
-
-        51: "слабая морось",
-
-        53: "морось",
-
-        55: "сильная морось",
-
-        56: "слабая ледяная морось",
-
-        57: "сильная ледяная морось",
-
-        61: "небольшой дождь",
-
-        63: "дождь",
-
-        65: "сильный дождь",
-
-        66: "слабый ледяной дождь",
-
-        67: "сильный ледяной дождь",
-
-        71: "небольшой снег",
-
-        73: "снег",
-
-        75: "сильный снег",
-
-        77: "снежные зёрна",
-
-        80: "небольшие ливни",
-
-        81: "ливни",
-
-        82: "сильные ливни",
-
-        85: "небольшой снегопад",
-
-        86: "сильный снегопад",
-
-        95: "гроза",
-
-        96: "гроза с небольшим градом",
-
-        99: "гроза с сильным градом",
-    }
-
-    return descriptions.get(
-        code,
-        "неизвестная погода",
-    )
-
-
-def format_weather_day(
-    data,
-    day_offset,
-):
-
-    day = get_weather_day_data(
-        data,
-        day_offset,
-    )
-
-    if not day:
-        return None
-
-    location = data.get(
-        "location",
-        {},
-    )
-
-    name = location.get(
-        "name",
-        "",
-    )
-
-    country = location.get(
-        "country",
-        "",
-    )
-
-    place = name
-
-    if country:
-        place += f", {country}"
-
-    description = weather_description_local(
-        day["code"]
-    )
-
-    result = [
-        f"Погода в {place} "
-        f"на {day['date']}:",
-        f"{description}.",
-    ]
-
-    min_temp = day["min_temp"]
-    max_temp = day["max_temp"]
-
-    if (
-        min_temp is not None
-        and max_temp is not None
-    ):
-
-        result.append(
-            f"Температура: "
-            f"{round(min_temp)}…"
-            f"{round(max_temp)}°C."
-        )
-
-    elif max_temp is not None:
-
-        result.append(
-            f"Температура до "
-            f"{round(max_temp)}°C."
-        )
-
-    probability = day["probability"]
-
-    if probability is not None:
-
-        result.append(
-            f"Вероятность осадков: "
-            f"{probability}%."
-        )
-
-    precipitation = day["precipitation"]
-
-    if (
-        precipitation is not None
-        and precipitation > 0
-    ):
-
-        result.append(
-            f"Осадки: около "
-            f"{precipitation} мм."
-        )
-
-    return "\n".join(
-        result
-    )
-
-
-# ============================================================
-# WEATHER ANSWER
-# ============================================================
-
-def weather_answer(
-    user_id,
-    text,
-):
-
-    weather_request = is_weather_request(
-        text
-    )
-
-    weather_followup = is_weather_followup(
-        text
-    )
-
-    if not weather_request and not weather_followup:
-        return None
-
-    day_offset = extract_weather_day_offset(
-        text
-    )
-
-    location = extract_weather_followup_location(
-        text
-    )
-
-    if location:
-
-        location = clean_weather_location(
-            location
-        )
-
-    if not location:
-
-        if weather_request:
-
-            location = extract_weather_location(
-                text
-            )
-
-            location = clean_weather_location(
-                location
-            )
-
-        else:
-
-            location = get_weather_context(
-                user_id
-            )
-
-    if not location:
-
-        return (
-            "Скажи город или регион — например: "
-            "«погода в Воронеже»."
-        )
-
-    try:
-
-        data = get_weather(
-            location
-        )
-
-        if not data:
-
-            return (
-                f"Не смогла получить актуальную "
-                f"погоду для {location}."
-            )
-
-        save_weather_context(
-            user_id,
-            location,
-        )
-
-        # ----------------------------------------------------
-        # СЕГОДНЯ
-        # ----------------------------------------------------
-
-        if day_offset == 0:
-
-            # Если это обычный запрос погоды,
-            # используем полный штатный форматтер.
-            return format_weather(
-                data
-            )
-
-        # ----------------------------------------------------
-        # ЗАВТРА / ПОСЛЕЗАВТРА
-        # ----------------------------------------------------
-
-        result = format_weather_day(
-            data,
-            day_offset,
-        )
-
-        if result:
-
-            return result
-
-        return format_weather(
-            data
-        )
-
-    except Exception:
-
-        logger.exception(
-            "Weather request failed for user %s, location=%s",
-            user_id,
-            location,
-        )
-
-        return (
-            "У меня сейчас что-то "
-            "с погодой случилось. "
-            "Попробуй ещё раз."
-        )
 
 
 # ============================================================
@@ -1634,6 +1460,10 @@ async def answer_text(
         user.id,
         user.username,
     )
+
+    # --------------------------------------------------------
+    # USER MEMORY
+    # --------------------------------------------------------
 
     if save_user_memory(
         user.id,
@@ -1751,7 +1581,9 @@ async def answer_text(
 
                 telegram_file = (
                     await context.bot.get_file(
-                        visual["telegram_file_id"]
+                        visual[
+                            "telegram_file_id"
+                        ]
                     )
                 )
 
@@ -1986,7 +1818,7 @@ async def clear_command(
 
     await update.message.reply_text(
         "Историю разговора, последнее "
-        "изображение и погодный контекст очистила."
+        "изображение и контекст погоды очистила."
     )
 
 
