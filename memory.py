@@ -6,6 +6,10 @@ from pathlib import Path
 DB_PATH = Path("aisele.db")
 
 
+# ============================================================
+# COMMON
+# ============================================================
+
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
@@ -24,6 +28,10 @@ def init_database():
 
     with get_connection() as connection:
 
+        # ----------------------------------------------------
+        # USERS
+        # ----------------------------------------------------
+
         connection.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -34,6 +42,10 @@ def init_database():
             )
         """)
 
+        # ----------------------------------------------------
+        # MESSAGES
+        # ----------------------------------------------------
+
         connection.execute("""
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,6 +55,10 @@ def init_database():
                 created_at TEXT NOT NULL
             )
         """)
+
+        # ----------------------------------------------------
+        # MEMORIES
+        # ----------------------------------------------------
 
         connection.execute("""
             CREATE TABLE IF NOT EXISTS memories (
@@ -55,6 +71,10 @@ def init_database():
             )
         """)
 
+        # ----------------------------------------------------
+        # RELATIONSHIP
+        # ----------------------------------------------------
+
         connection.execute("""
             CREATE TABLE IF NOT EXISTS relationship (
                 user_id INTEGER PRIMARY KEY,
@@ -66,7 +86,29 @@ def init_database():
         """)
 
         # ----------------------------------------------------
-        # Совместимость со старой БД
+        # WEATHER CONTEXT
+        # ----------------------------------------------------
+        # Храним последний город пользователя.
+        # Это нужно для:
+        #
+        # "Какая погода в Навои?"
+        # "А завтра?"
+        # "А послезавтра?"
+        #
+        # Тогда "завтра" относится к Навои,
+        # а не требует заново угадывать город.
+        # ----------------------------------------------------
+
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS weather_context (
+                user_id INTEGER PRIMARY KEY,
+                location TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
+        # ----------------------------------------------------
+        # COMPATIBILITY WITH OLD DATABASE
         # ----------------------------------------------------
 
         columns = connection.execute(
@@ -154,10 +196,6 @@ def ensure_user(
             )
 
         else:
-
-            # ------------------------------------------------
-            # Не затираем уже сохранённое имя пустым значением
-            # ------------------------------------------------
 
             new_display_name = (
                 display_name
@@ -406,8 +444,9 @@ def save_memory(
             connection.execute(
                 """
                 UPDATE memories
-                SET importance =
-                    MAX(importance, ?)
+                SET
+                    importance =
+                        MAX(importance, ?)
                 WHERE id = ?
                 """,
                 (
@@ -626,3 +665,92 @@ def update_relationship(
                 now_iso(),
             ),
         )
+
+
+# ============================================================
+# WEATHER CONTEXT
+# ============================================================
+
+def save_weather_context(
+    user_id,
+    location,
+):
+
+    location = (
+        location or ""
+    ).strip()
+
+    if not location:
+        return False
+
+    with get_connection() as connection:
+
+        connection.execute(
+            """
+            INSERT INTO weather_context
+            (
+                user_id,
+                location,
+                updated_at
+            )
+            VALUES (?, ?, ?)
+
+            ON CONFLICT(user_id)
+            DO UPDATE SET
+                location = excluded.location,
+                updated_at = excluded.updated_at
+            """,
+            (
+                user_id,
+                location,
+                now_iso(),
+            ),
+        )
+
+    return True
+
+
+def get_weather_context(
+    user_id,
+):
+
+    with get_connection() as connection:
+
+        row = connection.execute(
+            """
+            SELECT
+                location,
+                updated_at
+            FROM weather_context
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+
+    if row is None:
+        return None
+
+    return {
+        "location": row["location"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def clear_weather_context(
+    user_id,
+):
+
+    with get_connection() as connection:
+
+        connection.execute(
+            """
+            DELETE FROM weather_context
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
+
+
+# ============================================================
+# END
+# ============================================================
