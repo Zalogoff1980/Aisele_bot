@@ -865,7 +865,7 @@ def generate_image_reply(
     
         memory_text=None,
         relationship_text=None,
-        recent,
+        recent=None,
     ) = build_context(user_id)
 
     instruction = (
