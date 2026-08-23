@@ -27,10 +27,99 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
+# ПОСЛЕДНИЕ ОТВЕТЫ В ПАМЯТИ ПРОЦЕССА
+# ============================================================
+
+LAST_ASSISTANT_REPLIES = {}
+
+
+def remember_last_assistant_reply(user_id, text):
+    text = (text or "").strip()
+
+    if text:
+        LAST_ASSISTANT_REPLIES[user_id] = text
+
+
+def get_last_assistant_reply(user_id):
+
+    # 1. Сначала оперативная память.
+    # Это надёжнее SQLite после deploy Railway.
+    cached = LAST_ASSISTANT_REPLIES.get(user_id)
+
+    if cached:
+        return cached
+
+    # 2. Потом база.
+    try:
+
+        messages = get_recent_messages(
+            user_id,
+            limit=50,
+        )
+
+        for message in reversed(messages):
+
+            if message.get("role") != "assistant":
+                continue
+
+            content = (
+                message.get("content")
+                or ""
+            ).strip()
+
+            if content:
+
+                remember_last_assistant_reply(
+                    user_id,
+                    content,
+                )
+
+                return content
+
+    except Exception:
+
+        logger.exception(
+            "Failed to get last assistant reply from database"
+        )
+
+    # 3. Последняя визуальная реакция.
+    try:
+
+        visual = get_visual_context(
+            user_id
+        )
+
+        if visual:
+
+            content = (
+                visual.get("description")
+                or ""
+            ).strip()
+
+            if content:
+
+                remember_last_assistant_reply(
+                    user_id,
+                    content,
+                )
+
+                return content
+
+    except Exception:
+
+        logger.exception(
+            "Failed to get visual context"
+        )
+
+    return None
+
+
+# ============================================================
 # TTS
 # ============================================================
 
 TTS_MODEL = "gpt-4o-mini-tts"
+
 TTS_VOICE = "coral"
 
 TTS_INSTRUCTIONS = (
@@ -44,29 +133,53 @@ TTS_INSTRUCTIONS = (
 
 
 # ============================================================
-# КОМАНДЫ ДЛЯ ПОСЛЕДНЕГО ОТВЕТА
+# КОМАНДЫ ТЕКСТ / ГОЛОС
 # ============================================================
 
 TEXT_MODE_PATTERNS = (
-    r"\bпереведи\s+(?:своё|свой)\s+(?:последнее\s+)?голосовое\s+в\s+текст\b",
-    r"\bпереведи\s+(?:своё|свой)\s+голосовое\s+в\s+текст\b",
-    r"\bсделай\s+(?:свой\s+)?последний\s+ответ\s+текстом\b",
-    r"\bскажи\s+(?:свой\s+)?последний\s+ответ\s+текстом\b",
+
+    r"\bпереведи\s+(?:своё|свой)"
+    r"\s+(?:последнее\s+)?голосовое\s+в\s+текст\b",
+
+    r"\bпереведи\s+(?:своё|свой)"
+    r"\s+голосовое\s+в\s+текст\b",
+
+    r"\bсделай\s+(?:свой\s+)?последний"
+    r"\s+ответ\s+текстом\b",
+
+    r"\bскажи\s+(?:свой\s+)?последний"
+    r"\s+ответ\s+текстом\b",
+
     r"\bповтори\s+(?:это\s+)?текстом\b",
+
     r"\bповтори\s+(?:свой\s+)?ответ\s+текстом\b",
-    r"\bсвой\s+последний\s+ответ\s+в\s+текст\b",
+
+    r"\bсвой\s+последний"
+    r"\s+ответ\s+в\s+текст\b",
 )
 
 
 VOICE_MODE_PATTERNS = (
-    r"\bозвучь\s+(?:свой\s+)?(?:последний\s+)?ответ\b",
-    r"\bсделай\s+(?:свой\s+)?последний\s+ответ\s+голосом\b",
-    r"\bскажи\s+(?:свой\s+)?последний\s+ответ\s+голосом\b",
+
+    r"\bозвучь\s+(?:свой\s+)?"
+    r"(?:последний\s+)?ответ\b",
+
+    r"\bсделай\s+(?:свой\s+)?последний"
+    r"\s+ответ\s+голосом\b",
+
+    r"\bскажи\s+(?:свой\s+)?последний"
+    r"\s+ответ\s+голосом\b",
+
     r"\bповтори\s+(?:это\s+)?голосом\b",
+
     r"\bповтори\s+(?:свой\s+)?ответ\s+голосом\b",
+
     r"\bответь\s+голосом\b",
+
     r"\bскажи\s+это\s+голосом\b",
-    r"\bсвой\s+последний\s+ответ\s+голосом\b",
+
+    r"\bсвой\s+последний"
+    r"\s+ответ\s+голосом\b",
 )
 
 
@@ -103,33 +216,6 @@ def is_voice_mode_command(text):
 
 
 # ============================================================
-# ПОСЛЕДНИЙ ОТВЕТ АЙСЕЛЬ
-# ============================================================
-
-def get_last_assistant_reply(user_id):
-
-    messages = get_recent_messages(
-        user_id,
-        limit=50,
-    )
-
-    for message in reversed(messages):
-
-        if message.get("role") != "assistant":
-            continue
-
-        content = (
-            message.get("content")
-            or ""
-        ).strip()
-
-        if content:
-            return content
-
-    return None
-
-
-# ============================================================
 # ОЗВУЧИВАНИЕ
 # ============================================================
 
@@ -157,19 +243,28 @@ def synthesize_speech(text):
 
     os.close(fd)
 
-    response = client.audio.speech.create(
-        model=TTS_MODEL,
-        voice=TTS_VOICE,
-        input=text,
-        instructions=TTS_INSTRUCTIONS,
-        response_format="mp3",
-    )
+    try:
 
-    response.stream_to_file(
-        path
-    )
+        response = client.audio.speech.create(
+            model=TTS_MODEL,
+            voice=TTS_VOICE,
+            input=text,
+            instructions=TTS_INSTRUCTIONS,
+            response_format="mp3",
+        )
 
-    return path
+        response.stream_to_file(
+            path
+        )
+
+        return path
+
+    except Exception:
+
+        if os.path.exists(path):
+            os.remove(path)
+
+        raise
 
 
 async def send_voice_reply(
@@ -211,7 +306,7 @@ async def send_voice_reply(
 
 
 # ============================================================
-# ОБРАБОТКА «ПОВТОРИ / ОЗВУЧЬ / ТЕКСТОМ»
+# ПОВТОР ПОСЛЕДНЕГО ОТВЕТА
 # ============================================================
 
 async def handle_reply_mode(
@@ -251,8 +346,10 @@ async def handle_reply_mode(
         user.username,
     )
 
-    # Получаем последний ответ ДО того,
-    # как записываем текущую команду.
+    # ВАЖНО:
+    # получаем предыдущий ответ ДО сохранения
+    # текущей команды.
+
     last_reply = get_last_assistant_reply(
         user.id
     )
@@ -271,13 +368,20 @@ async def handle_reply_mode(
     if not last_reply:
 
         answer = (
-            "У меня пока нет предыдущего "
-            "ответа, который можно повторить."
+            "Я ещё не успела ничего ответить, "
+            "что можно повторить. "
+            "Сначала поговори со мной, "
+            "а потом попроси озвучить мой ответ."
         )
 
         save_message(
             user.id,
             "assistant",
+            answer,
+        )
+
+        remember_last_assistant_reply(
+            user.id,
             answer,
         )
 
@@ -288,7 +392,7 @@ async def handle_reply_mode(
         return True
 
     # --------------------------------------------------------
-    # ПОВТОР ТЕКСТОМ
+    # ТЕКСТОМ
     # --------------------------------------------------------
 
     if want_text:
@@ -300,7 +404,7 @@ async def handle_reply_mode(
         return True
 
     # --------------------------------------------------------
-    # ПОВТОР ГОЛОСОМ
+    # ГОЛОСОМ
     # --------------------------------------------------------
 
     try:
@@ -326,7 +430,7 @@ async def handle_reply_mode(
 
 
 # ============================================================
-# УМНЫЙ ТЕКСТОВЫЙ HANDLER
+# УМНЫЙ TEXT HANDLER
 # ============================================================
 
 async def smart_text_handler(
@@ -342,6 +446,7 @@ async def smart_text_handler(
 
     text = update.message.text
 
+    # Сначала специальные команды.
     handled = await handle_reply_mode(
         update,
         context,
@@ -351,10 +456,35 @@ async def smart_text_handler(
     if handled:
         return
 
+    # Обычный текст.
     await text_handler(
         update,
         context,
     )
+
+    # После обычного ответа сохраняем
+    # последний ответ в оперативную память.
+
+    if update.effective_user:
+
+        try:
+
+            last_reply = get_last_assistant_reply(
+                update.effective_user.id
+            )
+
+            if last_reply:
+
+                remember_last_assistant_reply(
+                    update.effective_user.id,
+                    last_reply,
+                )
+
+        except Exception:
+
+            logger.exception(
+                "Failed to cache last assistant reply"
+            )
 
 
 # ============================================================
@@ -419,10 +549,9 @@ async def voice_handler(
             user.username,
         )
 
-        # Сначала проверяем:
-        # «повтори голосом»,
-        # «повтори текстом»,
-        # «озвучь свой последний ответ» и т.д.
+        # ----------------------------------------------------
+        # КОМАНДА «ОЗВУЧЬ / ПОВТОРИ»
+        # ----------------------------------------------------
 
         handled = await handle_reply_mode(
             update,
@@ -460,6 +589,11 @@ async def voice_handler(
             save_message(
                 user.id,
                 "assistant",
+                answer,
+            )
+
+            remember_last_assistant_reply(
+                user.id,
                 answer,
             )
 
@@ -545,14 +679,23 @@ async def voice_handler(
                 "Повтори."
             )
 
+        # ----------------------------------------------------
+        # СОХРАНЯЕМ ОТВЕТ
+        # ----------------------------------------------------
+
         save_message(
             user.id,
             "assistant",
             answer,
         )
 
+        remember_last_assistant_reply(
+            user.id,
+            answer,
+        )
+
         # ----------------------------------------------------
-        # ОТВЕТ ГОЛОСОМ
+        # ОТВЕЧАЕМ ГОЛОСОМ
         # ----------------------------------------------------
 
         await send_voice_reply(
@@ -570,11 +713,11 @@ async def voice_handler(
 
             await update.message.reply_text(
                 "С голосом что-то пошло не так. "
-                "Сейчас починю."
+                "Попробуй ещё раз."
             )
 
         except Exception:
 
             logger.exception(
                 "Failed to send voice error"
-    )
+        )
