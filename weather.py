@@ -2,12 +2,7 @@ import json
 import re
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
 
-
-# ============================================================
-# OPEN-METEO
-# ============================================================
 
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
@@ -18,6 +13,7 @@ WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
 # ============================================================
 
 def get_json(url, params):
+
     query = urlencode(params)
 
     request = Request(
@@ -31,31 +27,28 @@ def get_json(url, params):
         request,
         timeout=15,
     ) as response:
-        data = response.read()
 
-    return json.loads(data)
+        return json.loads(
+            response.read()
+        )
 
 
 # ============================================================
-# LOCATION NORMALIZATION
+# LOCATION
 # ============================================================
 
 def normalize_location(location):
+
     location = (
         location or ""
     ).strip()
 
-    if not location:
-        return ""
-
-    # Убираем вопросительные и прочие знаки.
     location = re.sub(
         r"[?.!,;:]+$",
         "",
         location,
     ).strip()
 
-    # Убираем типичные слова перед городом.
     location = re.sub(
         r"^(?:сейчас|сегодня|завтра|послезавтра)\s+",
         "",
@@ -70,24 +63,21 @@ def normalize_location(location):
         flags=re.IGNORECASE,
     ).strip()
 
-    # "город Навои" -> "Навои"
     location = re.sub(
-        r"^город\s+",
+        r"^город(?:е)?\s+",
         "",
         location,
         flags=re.IGNORECASE,
     ).strip()
 
-    # Нормализация частых падежей.
     aliases = {
+
         # Россия
         "воронеже": "Воронеж",
         "москве": "Москва",
         "санкт-петербурге": "Санкт-Петербург",
         "петербурге": "Санкт-Петербург",
-        "ленинграде": "Санкт-Петербург",
         "ростове": "Ростов-на-Дону",
-        "ростове-на-дону": "Ростов-на-Дону",
         "краснодаре": "Краснодар",
         "волгограде": "Волгоград",
         "саратове": "Саратов",
@@ -114,11 +104,8 @@ def normalize_location(location):
         "костроме": "Кострома",
         "архангельске": "Архангельск",
         "мурманске": "Мурманск",
-        "воркуте": "Воркута",
         "сочи": "Сочи",
-        "адлере": "Адлер",
         "калуге": "Калуга",
-        "рязані": "Рязань",
         "рязани": "Рязань",
         "пензе": "Пенза",
         "астрахани": "Астрахань",
@@ -150,7 +137,6 @@ def normalize_location(location):
         "навои": "Навои",
         "навоии": "Навои",
         "навою": "Навои",
-        "навоe": "Навои",
         "ташкенте": "Ташкент",
         "самарканде": "Самарканд",
         "бухаре": "Бухара",
@@ -160,12 +146,10 @@ def normalize_location(location):
         "нукусе": "Нукус",
     }
 
-    normalized = aliases.get(
+    return aliases.get(
         location.lower(),
         location,
     )
-
-    return normalized.strip()
 
 
 # ============================================================
@@ -181,8 +165,8 @@ def geocode_location(location):
     if not normalized:
         return None
 
-    # Сначала ищем конкретное название.
     try:
+
         data = get_json(
             GEOCODING_URL,
             {
@@ -192,7 +176,9 @@ def geocode_location(location):
                 "format": "json",
             },
         )
+
     except Exception:
+
         return None
 
     results = data.get(
@@ -205,45 +191,43 @@ def geocode_location(location):
 
     target = normalized.lower()
 
-    # 1. Точное совпадение названия.
+    # Сначала точное совпадение.
     for result in results:
 
         name = (
-            result.get("name", "")
+            result.get("name")
             or ""
         ).strip().lower()
 
         if name == target:
             return result
 
-    # 2. Если пользователь явно написал город
-    #    из Узбекистана — стараемся выбрать Узбекистан.
-    uzbekistan_results = [
+    # Для Навои приоритет Узбекистан.
+    uzbekistan = [
         result
         for result in results
         if (
-            result.get("country_code", "")
+            result.get("country_code")
             or ""
         ).lower() == "uz"
     ]
 
-    if uzbekistan_results:
-        return uzbekistan_results[0]
+    if uzbekistan:
+        return uzbekistan[0]
 
-    # 3. Россия.
-    russian_results = [
+    # Для российских городов приоритет Россия.
+    russia = [
         result
         for result in results
         if (
-            result.get("country_code", "")
+            result.get("country_code")
             or ""
         ).lower() == "ru"
     ]
 
-    if russian_results:
-        return russian_results[0]
+    if russia:
+        return russia[0]
 
-    # 4. Первый адекватный результат.
     return results[0]
 
 
@@ -292,7 +276,6 @@ def weather_description(code):
         86: "сильный снегопад",
 
         95: "гроза",
-
         96: "гроза с небольшим градом",
         99: "гроза с сильным градом",
     }
@@ -304,7 +287,7 @@ def weather_description(code):
 
 
 # ============================================================
-# WEATHER REQUEST DETECTION
+# WEATHER REQUEST
 # ============================================================
 
 def is_weather_request(text):
@@ -316,7 +299,6 @@ def is_weather_request(text):
     if not text:
         return False
 
-    # Прямые запросы.
     weather_words = (
         "погод",
         "температур",
@@ -339,8 +321,7 @@ def is_weather_request(text):
     ):
         return True
 
-    # Относительные продолжения диалога.
-    relative_requests = (
+    relative_words = (
         "а завтра",
         "завтра",
         "а послезавтра",
@@ -349,13 +330,10 @@ def is_weather_request(text):
         "на послезавтра",
     )
 
-    if any(
+    return any(
         phrase in text
-        for phrase in relative_requests
-    ):
-        return True
-
-    return False
+        for phrase in relative_words
+    )
 
 
 # ============================================================
@@ -367,30 +345,90 @@ def extract_weather_location(text):
     text = (
         text or ""
     ).strip()
-    
+
     if not text:
         return None
 
+    cleaned = re.sub(
+        r"[?.!,;:]+$",
+        "",
+        text,
+    ).strip()
+
     # --------------------------------------------------------
-    # Прямые конструкции:
+    # "Какая погода в городе Навои?"
+    # "Погода в Навои?"
+    # "Какая погода в Воронеже?"
+    # --------------------------------------------------------
+
+    patterns = [
+
+        r"(?:погода|температура|температуру|ветер|дождь|снег).*?(?:в|во|на)\s+(?:городе\s+)?(.+)$",
+
+        r"(?:какая|какой|какое).*?(?:погода|температура).*?(?:в|во|на)\s+(?:городе\s+)?(.+)$",
+    ]
+
+    for pattern in patterns:
+
+        match = re.search(
+            pattern,
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+
+        if match:
+
+            location = (
+                match.group(1)
+                or ""
+            ).strip()
+
+            location = re.sub(
+                r"[?.!,;:]+$",
+                "",
+                location,
+            ).strip()
+
+            if location:
+                return normalize_location(
+                    location
+                )
+
+    # --------------------------------------------------------
+    # "Погода города Навои"
+    # --------------------------------------------------------
+
+    match = re.search(
+        r"(?:погода|температура)\s+города\s+(.+)$",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+
+    if match:
+
+        location = (
+            match.group(1)
+            or ""
+        ).strip()
+
+        if location:
+            return normalize_location(
+                location
+            )
+
+    # --------------------------------------------------------
+    # Если пользователь написал только город.
     #
-    # "погода в Навои"
-    # "какая погода в городе Навои"
-    # "температура в Москве"
+    # Например:
+    # "Навои"
     # --------------------------------------------------------
 
-    patterns = (
+    normalized = normalize_location(
+        cleaned
+    )
 
-        r"(?:погода|температура|температуру|ветер|дождь|снег)"
-        r".*?"
-        r"(?:в|во|на)"
-        r"\s+(?:городе\s+)?"
-        r"([А-ЯЁA-Z][А-ЯЁа-яёA-Za-z-]*(?:\s+[А-ЯЁа-яёA-Za-z-]+)?)",
-
-        r"(?:какая|какой|какое)"
-        r".*?"
-        r"(?:погода|температура)"
-        r".*?"
-        r"(?:в|во|на)"
-        r"\s+(?:городе\s+)?"
-        r"([А-ЯЁA-Z][А-ЯЁа-яёA-Za-z-
+    known_locations = {
+        "Навои",
+        "Москва",
+        "Воронеж",
+       
