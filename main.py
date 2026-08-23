@@ -862,7 +862,7 @@ def generate_image_reply(
     caption="",
 
 
-    (
+    
         memory_text,
         relationship_text,
         recent,
