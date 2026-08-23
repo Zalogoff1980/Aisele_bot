@@ -53,6 +53,10 @@ from weather import (
     format_weather,
 )
 
+from city_image import (
+    get_city_image,
+)
+
 
 DB_PATH = "aisele.db"
 
@@ -577,6 +581,7 @@ def format_relative_weather(
         code = codes[day_index]
 
         try:
+
             from weather import weather_description
 
             description = weather_description(
@@ -669,10 +674,6 @@ def weather_answer(
         text
     )
 
-    # --------------------------------------------------------
-    # Если это не погода и не «завтра/послезавтра»
-    # --------------------------------------------------------
-
     if (
         not explicit_weather
         and relative_day is None
@@ -680,18 +681,9 @@ def weather_answer(
 
         return None
 
-    # --------------------------------------------------------
-    # Пытаемся найти город в текущем сообщении
-    # --------------------------------------------------------
-
     location = extract_weather_location(
         text
     )
-
-    # --------------------------------------------------------
-    # Если город не указан, но это относительный запрос,
-    # берём последний город ЭТОГО пользователя
-    # --------------------------------------------------------
 
     if (
         not location
@@ -702,10 +694,6 @@ def weather_answer(
             user_id
         )
 
-    # --------------------------------------------------------
-    # Города нет вообще
-    # --------------------------------------------------------
-
     if not location:
 
         return (
@@ -714,10 +702,6 @@ def weather_answer(
         )
 
     try:
-
-        # ----------------------------------------------------
-        # Новый город сохраняем
-        # ----------------------------------------------------
 
         explicit_location = (
             extract_weather_location(
@@ -731,10 +715,6 @@ def weather_answer(
                 user_id,
                 explicit_location,
             )
-
-        # ----------------------------------------------------
-        # Получаем прогноз
-        # ----------------------------------------------------
 
         data = get_weather(
             location,
@@ -756,20 +736,12 @@ def weather_answer(
                 f"для {location}.",
             )
 
-        # ----------------------------------------------------
-        # «А завтра?»
-        # ----------------------------------------------------
-
         if relative_day is not None:
 
             return format_relative_weather(
                 data,
                 relative_day,
             )
-
-        # ----------------------------------------------------
-        # Обычный запрос погоды
-        # ----------------------------------------------------
 
         return format_weather(
             data
@@ -1432,6 +1404,67 @@ def transcribe_voice(
 
 
 # ============================================================
+# CITY IMAGE
+# ============================================================
+
+async def send_city_image(
+    update,
+    location,
+):
+
+    if not update.message:
+        return False
+
+    location = (
+        location or ""
+    ).strip()
+
+    if not location:
+        return False
+
+    try:
+
+        logger.info(
+            "Searching city image for %s",
+            location,
+        )
+
+        image_bytes = get_city_image(
+            location
+        )
+
+        if not image_bytes:
+
+            logger.info(
+                "No city image found for %s",
+                location,
+            )
+
+            return False
+
+        image = io.BytesIO(
+            image_bytes
+        )
+
+        image.name = "city.jpg"
+
+        await update.message.reply_photo(
+            photo=image,
+        )
+
+        return True
+
+    except Exception:
+
+        logger.exception(
+            "City image failed for %s",
+            location,
+        )
+
+        return False
+
+
+# ============================================================
 # COMMON ANSWER
 # ============================================================
 
@@ -1515,6 +1548,40 @@ async def answer_text(
         )
 
         if weather_result is not None:
+
+            # ------------------------------------------------
+            # CITY IMAGE
+            # ------------------------------------------------
+            #
+            # Для нового запроса берём город из сообщения.
+            # Для «а завтра?» и подобных запросов берём
+            # последний город пользователя.
+            # ------------------------------------------------
+
+            weather_location = (
+                extract_weather_location(
+                    text
+                )
+            )
+
+            if not weather_location:
+
+                weather_location = (
+                    get_weather_context(
+                        user.id
+                    )
+                )
+
+            if weather_location:
+
+                await send_city_image(
+                    update,
+                    weather_location,
+                )
+
+            # ------------------------------------------------
+            # WEATHER TEXT
+            # ------------------------------------------------
 
             save_message(
                 user.id,
