@@ -3,23 +3,51 @@ import re
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
 
 
+# ============================================================
+# HTTP
+# ============================================================
+
 def get_json(url, params):
+
     query = urlencode(params)
+
     request = Request(
         f"{url}?{query}",
-        headers={"User-Agent": "AiseleBot/1.0"},
+        headers={
+            "User-Agent": "AiseleBot/1.0"
+        },
     )
-    with urlopen(request, timeout=15) as response:
-        return json.loads(response.read())
 
+    with urlopen(
+        request,
+        timeout=15,
+    ) as response:
+
+        return json.loads(
+            response.read()
+        )
+
+
+# ============================================================
+# LOCATION NORMALIZATION
+# ============================================================
 
 def normalize_location(location):
-    location = (location or "").strip()
-    location = re.sub(r"[?.!,;:]+$", "", location).strip()
+
+    location = (
+        location or ""
+    ).strip()
+
+    location = re.sub(
+        r"[?.!,;:]+$",
+        "",
+        location,
+    ).strip()
 
     location = re.sub(
         r"^(?:сейчас|сегодня|завтра|послезавтра)\s+",
@@ -43,6 +71,8 @@ def normalize_location(location):
     ).strip()
 
     aliases = {
+
+        # Russia
         "воронеже": "Воронеж",
         "москве": "Москва",
         "санкт-петербурге": "Санкт-Петербург",
@@ -82,6 +112,7 @@ def normalize_location(location):
         "махачкале": "Махачкала",
         "грозном": "Грозный",
 
+        # Ukraine
         "киеве": "Киев",
         "харькове": "Харьков",
         "одессе": "Одесса",
@@ -92,14 +123,17 @@ def normalize_location(location):
         "полтаве": "Полтава",
         "чернигове": "Чернигов",
 
+        # Belarus
         "минске": "Минск",
         "бресте": "Брест",
         "гомеле": "Гомель",
 
+        # Kazakhstan
         "астане": "Астана",
         "алматы": "Алматы",
         "алмате": "Алматы",
 
+        # Uzbekistan
         "навои": "Навои",
         "навоии": "Навои",
         "навою": "Навои",
@@ -118,13 +152,21 @@ def normalize_location(location):
     )
 
 
+# ============================================================
+# GEOCODING
+# ============================================================
+
 def geocode_location(location):
-    normalized = normalize_location(location)
+
+    normalized = normalize_location(
+        location
+    )
 
     if not normalized:
         return None
 
     try:
+
         data = get_json(
             GEOCODING_URL,
             {
@@ -134,40 +176,57 @@ def geocode_location(location):
                 "format": "json",
             },
         )
+
     except Exception:
+
         return None
 
-    results = data.get("results", [])
+    results = data.get(
+        "results",
+        [],
+    )
 
     if not results:
         return None
 
     target = normalized.lower()
 
+    # Сначала точное совпадение
     for result in results:
+
         name = (
-            result.get("name") or ""
+            result.get("name")
+            or ""
         ).strip().lower()
 
         if name == target:
             return result
 
+    # Для Навои и других узбекских городов
+    # предпочитаем Узбекистан
     uzbekistan = [
         result
         for result in results
         if (
-            result.get("country_code") or ""
+            result.get(
+                "country_code"
+            )
+            or ""
         ).lower() == "uz"
     ]
 
     if uzbekistan:
         return uzbekistan[0]
 
+    # Затем Россия
     russia = [
         result
         for result in results
         if (
-            result.get("country_code") or ""
+            result.get(
+                "country_code"
+            )
+            or ""
         ).lower() == "ru"
     ]
 
@@ -177,33 +236,49 @@ def geocode_location(location):
     return results[0]
 
 
+# ============================================================
+# WEATHER DESCRIPTION
+# ============================================================
+
 def weather_description(code):
+
     descriptions = {
+
         0: "ясно",
         1: "преимущественно ясно",
         2: "переменная облачность",
         3: "пасмурно",
+
         45: "туман",
         48: "изморозь и туман",
+
         51: "слабая морось",
         53: "морось",
         55: "сильная морось",
+
         56: "слабая ледяная морось",
         57: "сильная ледяная морось",
+
         61: "небольшой дождь",
         63: "дождь",
         65: "сильный дождь",
+
         66: "слабый ледяной дождь",
         67: "сильный ледяной дождь",
+
         71: "небольшой снег",
         73: "снег",
         75: "сильный снег",
+
         77: "снежные зерна",
+
         80: "небольшие ливни",
         81: "ливни",
         82: "сильные ливни",
+
         85: "небольшой снегопад",
         86: "сильный снегопад",
+
         95: "гроза",
         96: "гроза с небольшим градом",
         99: "гроза с сильным градом",
@@ -215,7 +290,12 @@ def weather_description(code):
     )
 
 
+# ============================================================
+# WEATHER REQUEST DETECTION
+# ============================================================
+
 def is_weather_request(text):
+
     text = (
         text or ""
     ).strip().lower()
@@ -252,15 +332,52 @@ def is_weather_request(text):
         "послезавтра",
         "на завтра",
         "на послезавтра",
+        "а сегодня",
+        "сегодня",
+        "на сегодня",
     )
 
-    return any(
+    if any(
         phrase in text
         for phrase in relative_words
+    ):
+        return True
+
+    # ========================================================
+    # ВАЖНО:
+    #
+    # Теперь:
+    #
+    # "А в Воронеже?"
+    # "В Москве?"
+    # "А в Самаре?"
+    #
+    # тоже считаются запросом погоды.
+    # ========================================================
+
+    city_request = re.match(
+        r"^\s*"
+        r"(?:а\s+)?"
+        r"(?:в|во|на)\s+"
+        r".+?"
+        r"\s*[?!.,]*"
+        r"\s*$",
+        text,
+        flags=re.IGNORECASE,
     )
 
+    if city_request:
+        return True
+
+    return False
+
+
+# ============================================================
+# LOCATION EXTRACTION
+# ============================================================
 
 def extract_weather_location(text):
+
     text = (
         text or ""
     ).strip()
@@ -274,10 +391,55 @@ def extract_weather_location(text):
         text,
     ).strip()
 
-    patterns = (
-        r"(?:погода|температура|температуру|ветер|дождь|снег).*?(?:в|во|на)\s+(?:городе\s+)?(.+)$",
+    # ========================================================
+    # "А в Воронеже?"
+    # "В Москве?"
+    # "А в Самаре?"
+    # ========================================================
 
-        r"(?:какая|какой|какое).*?(?:погода|температура).*?(?:в|во|на)\s+(?:городе\s+)?(.+)$",
+    match = re.match(
+        r"^\s*"
+        r"(?:а\s+)?"
+        r"(?:в|во|на)\s+"
+        r"(?:городе\s+)?"
+        r"(.+?)"
+        r"\s*$",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+
+    if match:
+
+        location = (
+            match.group(1)
+            or ""
+        ).strip()
+
+        if location:
+
+            return normalize_location(
+                location
+            )
+
+    # ========================================================
+    # Обычные запросы
+    # ========================================================
+
+    patterns = (
+
+        r"(?:погода|температура|температуру|ветер|дождь|снег)"
+        r".*?"
+        r"(?:в|во|на)\s+"
+        r"(?:городе\s+)?"
+        r"(.+)$",
+
+        r"(?:какая|какой|какое)"
+        r".*?"
+        r"(?:погода|температура)"
+        r".*?"
+        r"(?:в|во|на)\s+"
+        r"(?:городе\s+)?"
+        r"(.+)$",
     )
 
     for pattern in patterns:
@@ -291,7 +453,8 @@ def extract_weather_location(text):
         if match:
 
             location = (
-                match.group(1) or ""
+                match.group(1)
+                or ""
             ).strip()
 
             location = re.sub(
@@ -301,12 +464,18 @@ def extract_weather_location(text):
             ).strip()
 
             if location:
+
                 return normalize_location(
                     location
                 )
 
+    # ========================================================
+    # "погода города Воронеж"
+    # ========================================================
+
     match = re.search(
-        r"(?:погода|температура)\s+города\s+(.+)$",
+        r"(?:погода|температура)"
+        r"\s+города\s+(.+)$",
         cleaned,
         flags=re.IGNORECASE,
     )
@@ -314,16 +483,22 @@ def extract_weather_location(text):
     if match:
 
         location = (
-            match.group(1) or ""
+            match.group(1)
+            or ""
         ).strip()
 
         if location:
+
             return normalize_location(
                 location
             )
 
     return None
 
+
+# ============================================================
+# GET WEATHER
+# ============================================================
 
 def get_weather(
     location,
@@ -370,7 +545,9 @@ def get_weather(
         weather = get_json(
             WEATHER_URL,
             {
+
                 "latitude": latitude,
+
                 "longitude": longitude,
 
                 "current": (
@@ -416,9 +593,11 @@ def get_weather(
         }
 
     return {
+
         "success": True,
 
         "location": {
+
             "name": place.get(
                 "name",
                 location,
@@ -435,6 +614,7 @@ def get_weather(
             ),
 
             "latitude": latitude,
+
             "longitude": longitude,
 
             "timezone": place.get(
@@ -460,18 +640,32 @@ def get_weather(
     }
 
 
+# ============================================================
+# FORMAT CURRENT WEATHER
+# ============================================================
+
 def format_weather(data):
 
-    if not data.get("success"):
+    if not data.get(
+        "success"
+    ):
 
         return data.get(
             "error",
             "Не удалось получить погоду.",
         )
 
-    location = data["location"]
-    current = data["current"]
-    daily = data["daily"]
+    location = data[
+        "location"
+    ]
+
+    current = data[
+        "current"
+    ]
+
+    daily = data[
+        "daily"
+    ]
 
     name = location.get(
         "name",
@@ -512,7 +706,9 @@ def format_weather(data):
     )
 
     result = [
+
         f"Погода в {place}",
+
         (
             "Сейчас "
             + weather_description(
@@ -566,7 +762,7 @@ def format_weather(data):
 
         result.append(
             f"Влажность: "
-            f"{humidity}%."
+            f"{round(humidity)}%."
         )
 
     if wind is not None:
@@ -587,11 +783,20 @@ def format_weather(data):
 
         result.append(
             f"Облачность: "
-            f"{cloud}%."
+            f"{round(cloud)}%."
         )
+
+    # ========================================================
+    # DAILY
+    # ========================================================
 
     dates = daily.get(
         "time",
+        [],
+    )
+
+    codes = daily.get(
+        "weather_code",
         [],
     )
 
@@ -610,77 +815,88 @@ def format_weather(data):
         [],
     )
 
-    precipitation_sum = daily.get(
+    precipitation = daily.get(
         "precipitation_sum",
         [],
     )
 
-    codes = daily.get(
-        "weather_code",
-        [],
+    result.append("")
+    result.append(
+        "Ближайший прогноз:"
     )
 
-    if dates:
-
-        result.append("")
-        result.append(
-            "Ближайший прогноз:"
-        )
-
-    for index, date in enumerate(
-        dates[:3]
+    for i, date in enumerate(
+        dates[:7]
     ):
 
-        min_temp = (
-            min_temps[index]
-            if index < len(min_temps)
-            else None
-        )
+        description = ""
 
-        max_temp = (
-            max_temps[index]
-            if index < len(max_temps)
-            else None
-        )
+        if i < len(codes):
 
-        probability = (
-            probabilities[index]
-            if index < len(probabilities)
-            else None
-        )
+            description = (
+                weather_description(
+                    codes[i]
+                )
+            )
 
-        rain = (
-            precipitation_sum[index]
-            if index < len(precipitation_sum)
-            else None
-        )
+        minimum = None
 
-        code = (
-            codes[index]
-            if index < len(codes)
-            else None
-        )
+        if i < len(
+            min_temps
+        ):
+
+            minimum = min_temps[i]
+
+        maximum = None
+
+        if i < len(
+            max_temps
+        ):
+
+            maximum = max_temps[i]
+
+        probability = None
+
+        if i < len(
+            probabilities
+        ):
+
+            probability = (
+                probabilities[i]
+            )
+
+        rain = None
+
+        if i < len(
+            precipitation
+        ):
+
+            rain = (
+                precipitation[i]
+            )
 
         line = (
             f"{date}: "
-            f"{weather_description(code)}"
+            f"{description}"
         )
 
         if (
-            min_temp is not None
-            and max_temp is not None
+            minimum is not None
+            and maximum is not None
         ):
 
             line += (
-                f", {round(min_temp)}…"
-                f"{round(max_temp)}°C"
+                f", "
+                f"{round(minimum)}…"
+                f"{round(maximum)}°C"
             )
 
         if probability is not None:
 
             line += (
-                f", вероятность осадков "
-                f"{probability}%"
+                f", вероятность "
+                f"осадков "
+                f"{round(probability)}%"
             )
 
         if rain is not None:
