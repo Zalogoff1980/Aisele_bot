@@ -938,6 +938,84 @@ async def answer_text(
             "Попробуй ещё раз."
         )
 
+# ============================================================
+# INITIATIVE
+# ============================================================
+
+def generate_initiative(user_id):
+
+    (
+        memory_text,
+        relationship_text,
+        recent,
+    ) = build_context(user_id)
+
+    if not recent:
+        return ""
+
+    messages = [
+        {
+            "role": "system",
+            "content": AISELE_PERSONA,
+        },
+        {
+            "role": "system",
+            "content": (
+                "Ты сейчас решаешь, стоит ли Айсель "
+                "самой начать небольшой разговор.\n\n"
+
+                "ПАМЯТЬ:\n"
+                + memory_text
+                + "\n\n"
+
+                "СОСТОЯНИЕ ОТНОШЕНИЙ:\n"
+                + relationship_text
+                + "\n\n"
+
+                "ПРАВИЛА:\n"
+                "1. Используй только реально существующий контекст.\n"
+                "2. Ничего не выдумывай.\n"
+                "3. Не упоминай несуществующие прошлые события.\n"
+                "4. Если нет хорошей темы — верни ровно NO_INITIATIVE.\n"
+                "5. Если тема есть — напиши короткое естественное "
+                "сообщение Айсель пользователю.\n"
+                "6. Не объясняй, почему ты решила написать.\n"
+                "7. Не говори как бот или оператор.\n"
+                "8. Не начинай с «Привет, как дела?», если для этого "
+                "нет причины.\n"
+            ),
+        },
+    ]
+
+    messages.extend(recent[-20:])
+
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                "Реши, есть ли сейчас естественная причина "
+                "Айсель самой написать пользователю.\n"
+                "Если нет — ответь ровно: NO_INITIATIVE\n"
+                "Если да — напиши только её сообщение."
+            ),
+        }
+    )
+
+    response = client.chat.completions.create(
+        model=AI_MODEL,
+        messages=messages,
+    )
+
+    result = (
+        response.choices[0]
+        .message.content
+        or ""
+    ).strip()
+
+    if result == "NO_INITIATIVE":
+        return ""
+
+    return result
 
 # ============================================================
 # /START
