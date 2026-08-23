@@ -19,8 +19,8 @@ from main import (
 )
 
 from voice import (
-    voice_handler,
     smart_text_handler,
+    voice_handler,
 )
 
 
@@ -31,7 +31,9 @@ logging.basicConfig(
 
 
 def main():
+
     init_database()
+
     init_visual_context()
 
     application = (
@@ -40,6 +42,10 @@ def main():
         .token(TELEGRAM_TOKEN)
         .build()
     )
+
+    # --------------------------------------------------------
+    # COMMANDS
+    # --------------------------------------------------------
 
     application.add_handler(
         CommandHandler(
@@ -62,12 +68,20 @@ def main():
         )
     )
 
+    # --------------------------------------------------------
+    # PHOTOS
+    # --------------------------------------------------------
+
     application.add_handler(
         MessageHandler(
             filters.PHOTO,
             photo_handler,
         )
     )
+
+    # --------------------------------------------------------
+    # VOICE
+    # --------------------------------------------------------
 
     application.add_handler(
         MessageHandler(
@@ -76,12 +90,10 @@ def main():
         )
     )
 
-    # Текстовый обработчик.
-    # Сначала проверяет команды вроде:
-    # «озвучь свой последний ответ»
-    # «повтори голосом»
-    # «переведи своё голосовое в текст»
-    # и только потом отправляет обычный текст в AI.
+    # --------------------------------------------------------
+    # TEXT
+    # --------------------------------------------------------
+
     application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -89,7 +101,9 @@ def main():
         )
     )
 
-    logging.info("Aisele started")
+    logging.info(
+        "Aisele started"
+    )
 
     application.run_polling(
         drop_pending_updates=False
