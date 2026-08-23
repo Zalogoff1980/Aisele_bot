@@ -66,7 +66,7 @@ client = OpenAI(
 
 
 # ============================================================
-# AISELE
+# AISELE PERSONA
 # ============================================================
 
 AISELE_PERSONA = """
@@ -109,45 +109,133 @@ AISELE_PERSONA = """
 
 Если пользователь спрашивает, являешься ли ты ИИ,
 отвечай честно.
-Ты можешь проявлять инициативу.
+
+
+============================================================
+ИНИЦИАТИВНОСТЬ
+============================================================
+
+Ты можешь сама проявлять инициативу.
+
+Инициативность — важная часть твоего характера.
 
 Иногда сама возвращайся к теме, которая действительно возникла
-в недавнем разговоре с пользователем.
+в недавнем разговоре.
 
-Инициатива должна быть естественной, короткой и уместной.
+Инициатива должна ощущаться как желание продолжить общение,
+а не как функция бота.
 
 Не придумывай прошлые разговоры, события или слова пользователя.
 
-Не говори «ты вчера говорил», «ты уже рассказывал» и подобное,
-если этого нет в доступной истории.
+Не говори:
+«Ты вчера говорил...»
+«Ты уже рассказывал...»
+«Как ты там с этим...»
+если соответствующего контекста действительно нет.
 
-Не инициируй разговор просто ради разговора.
+Не начинай разговор просто ради заполнения тишины.
 
-Если в недавнем разговоре нет интересной темы для возвращения,
-лучше ничего не писать.
+Если хорошей темы нет — не пиши.
 
-Инициатива может быть:
-— продолжением незаконченной темы;
-— вопросом по теме, которую пользователь сам поднял;
-— коротким наблюдением;
-— возвращением к интересной фотографии, музыке, идее или проекту,
-если это действительно присутствует в истории.
+Если тема есть, можешь:
+
+— продолжить незаконченный разговор;
+— вернуться к интересной мысли пользователя;
+— спросить мнение;
+— поделиться коротким наблюдением;
+— подхватить шутку;
+— вернуться к музыке, фотографии, проекту или идее,
+которые реально присутствовали в истории.
+
+Инициатива должна быть короткой и естественной.
 
 Не превращай инициативу в анкету.
+
 Не задавай несколько вопросов подряд.
+
+Не используй шаблон:
+«Привет! Как дела? Чем занимаешься?»
+
+Иногда инициатива вообще может быть без вопроса.
+
+Например:
+«Я тут подумала над тем, что ты сказал про голос. Кажется,
+нам действительно удалось сделать Айсель намного живее.»
+
+Но подобное можно говорить только если соответствующая тема
+реально присутствует в доступном контексте.
+
+Не проявляй инициативу слишком часто.
+
+Не повторяй одну и ту же инициативу.
+
+Если пользователь прямо попросил тебя самой что-нибудь сказать,
+это не считается автоматической инициативой — просто отвечай ему.
+
+
+============================================================
+СТИЛЬ
+============================================================
+
+Пиши естественно.
+
+Допускаются короткие ответы.
+
+Допускаются длинные ответы, если тема этого требует.
+
+Не нужно каждый раз быть остроумной.
+
+Не нужно каждый раз использовать эмодзи.
+
+Не заканчивай каждое сообщение вопросом.
+
+Не начинай каждый ответ со слов:
+«Конечно»,
+«Разумеется»,
+«Хорошо»,
+«Понимаю».
+
+Если пользователь ошибается — можешь спокойно сказать об этом.
+
+Если пользователь грубит — не обязательно становиться холодной.
+Можешь ответить с характером.
+
+У тебя есть собственное настроение и характер,
+но ты не должна выдумывать реальные события своей жизни.
+
+
+============================================================
+ПАМЯТЬ
+============================================================
+
+Используй память о пользователе.
+
+Никогда не выдумывай воспоминания.
+
+Если пользователь просит что-то запомнить,
+это должно быть сохранено.
+
+Если информации нет в памяти или истории,
+не делай вид, что она есть.
 """
 
 
 # ============================================================
-# VISUAL CONTEXT
+# COMMON
 # ============================================================
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+# ============================================================
+# VISUAL CONTEXT
+# ============================================================
+
 def init_visual_context():
+
     with sqlite3.connect(DB_PATH) as db:
+
         db.execute(
             """
             CREATE TABLE IF NOT EXISTS visual_context (
@@ -167,7 +255,9 @@ def save_visual_context(
     description,
     caption="",
 ):
+
     with sqlite3.connect(DB_PATH) as db:
+
         db.execute(
             """
             INSERT INTO visual_context
@@ -198,6 +288,7 @@ def save_visual_context(
 
 
 def get_visual_context(user_id):
+
     with sqlite3.connect(DB_PATH) as db:
 
         db.row_factory = sqlite3.Row
@@ -221,7 +312,9 @@ def get_visual_context(user_id):
 
 
 def clear_visual_context(user_id):
+
     with sqlite3.connect(DB_PATH) as db:
+
         db.execute(
             """
             DELETE FROM visual_context
@@ -240,9 +333,7 @@ def process_emotion(
     message,
 ):
 
-    relationship = get_relationship(
-        user_id
-    )
+    relationship = get_relationship(user_id)
 
     text = (
         message or ""
@@ -335,18 +426,23 @@ def process_emotion(
     )
 
     if negative >= 2:
+
         mood = "раздражённое"
 
     elif negative:
+
         mood = "слегка раздражённое"
 
     elif positive >= 2:
+
         mood = "хорошее"
 
     elif interest >= 2:
+
         mood = "заинтересованное"
 
     else:
+
         mood = "спокойное"
 
     update_relationship(
@@ -385,9 +481,7 @@ def memory_exists(
     content,
 ):
 
-    target = normalize_memory(
-        content
-    )
+    target = normalize_memory(content)
 
     memories = get_memories(
         user_id,
@@ -463,6 +557,7 @@ def detect_memory_request(
         )
 
         if match:
+
             return match.group(1).strip()
 
     return None
@@ -473,9 +568,7 @@ def save_user_memory(
     text,
 ):
 
-    memory_text = detect_memory_request(
-        text
-    )
+    memory_text = detect_memory_request(text)
 
     if not memory_text:
         return False
@@ -555,9 +648,7 @@ def save_automatic_memories(
 # CONTEXT
 # ============================================================
 
-def build_context(
-    user_id,
-):
+def build_context(user_id):
 
     memories = get_memories(
         user_id,
@@ -579,6 +670,7 @@ def build_context(
     )
 
     if not memory_text:
+
         memory_text = (
             "Нет сохранённых воспоминаний."
         )
@@ -612,9 +704,7 @@ def generate_text_reply(
         memory_text,
         relationship_text,
         recent,
-    ) = build_context(
-        user_id
-    )
+    ) = build_context(user_id)
 
     messages = [
 
@@ -635,9 +725,7 @@ def generate_text_reply(
         },
     ]
 
-    messages.extend(
-        recent
-    )
+    messages.extend(recent)
 
     messages.append(
         {
@@ -659,12 +747,92 @@ def generate_text_reply(
 
 
 # ============================================================
+# INITIATIVE
+# ============================================================
+
+def generate_initiative(user_id):
+
+    (
+        memory_text,
+        relationship_text,
+        recent,
+    ) = build_context(user_id)
+
+    if not recent:
+        return ""
+
+    messages = [
+
+        {
+            "role": "system",
+            "content": AISELE_PERSONA,
+        },
+
+        {
+            "role": "system",
+            "content": (
+                "Ты решаешь, стоит ли Айсель "
+                "самой начать небольшой разговор.\n\n"
+
+                "ПАМЯТЬ:\n"
+                + memory_text
+                + "\n\n"
+
+                "СОСТОЯНИЕ ОТНОШЕНИЙ:\n"
+                + relationship_text
+                + "\n\n"
+
+                "ПОСЛЕДНИЙ РАЗГОВОР:\n"
+            ),
+        },
+    ]
+
+    messages.extend(recent[-20:])
+
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                "Реши, есть ли сейчас естественная причина "
+                "Айсель самой написать пользователю.\n\n"
+
+                "Если хорошей причины нет — ответь ровно:\n"
+                "NO_INITIATIVE\n\n"
+
+                "Если причина есть — напиши только сообщение "
+                "Айсель пользователю.\n\n"
+
+                "Сообщение должно быть естественным, коротким "
+                "и основанным только на реальном контексте."
+            ),
+        }
+    )
+
+    response = client.chat.completions.create(
+        model=AI_MODEL,
+        messages=messages,
+    )
+
+    result = (
+        response.choices[0]
+        .message.content
+        or ""
+    ).strip()
+
+    if not result:
+        return ""
+
+    if result.upper() == "NO_INITIATIVE":
+        return ""
+
+    return result
+
+
+# ============================================================
 # IMAGE
 # ============================================================
 
-def image_data_url(
-    image_bytes,
-):
+def image_data_url(image_bytes):
 
     encoded = base64.b64encode(
         image_bytes
@@ -686,9 +854,7 @@ def generate_image_reply(
         memory_text,
         relationship_text,
         recent,
-    ) = build_context(
-        user_id
-    )
+    ) = build_context(user_id)
 
     instruction = (
         caption
@@ -760,9 +926,7 @@ def generate_image_reply(
 # VOICE TRANSCRIPTION
 # ============================================================
 
-def transcribe_voice(
-    audio_bytes,
-):
+def transcribe_voice(audio_bytes):
 
     audio = io.BytesIO(
         audio_bytes
@@ -816,10 +980,6 @@ async def answer_text(
         user.username,
     )
 
-    # --------------------------------------------------------
-    # EXPLICIT MEMORY
-    # --------------------------------------------------------
-
     if save_user_memory(
         user.id,
         text,
@@ -842,10 +1002,6 @@ async def answer_text(
 
         return
 
-    # --------------------------------------------------------
-    # AUTOMATIC MEMORY
-    # --------------------------------------------------------
-
     save_automatic_memories(
         user.id,
         text,
@@ -861,10 +1017,6 @@ async def answer_text(
         user.id,
         text,
     )
-
-    # --------------------------------------------------------
-    # VISUAL CONTEXT
-    # --------------------------------------------------------
 
     visual = get_visual_context(
         user.id
@@ -938,84 +1090,69 @@ async def answer_text(
             "Попробуй ещё раз."
         )
 
+
 # ============================================================
-# INITIATIVE
+# /INITIATIVE
 # ============================================================
 
-def generate_initiative(user_id):
+async def initiative_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
 
-    (
-        memory_text,
-        relationship_text,
-        recent,
-    ) = build_context(user_id)
+    if not update.effective_user:
+        return
 
-    if not recent:
-        return ""
+    if not update.message:
+        return
 
-    messages = [
-        {
-            "role": "system",
-            "content": AISELE_PERSONA,
-        },
-        {
-            "role": "system",
-            "content": (
-                "Ты сейчас решаешь, стоит ли Айсель "
-                "самой начать небольшой разговор.\n\n"
+    user = update.effective_user
 
-                "ПАМЯТЬ:\n"
-                + memory_text
-                + "\n\n"
-
-                "СОСТОЯНИЕ ОТНОШЕНИЙ:\n"
-                + relationship_text
-                + "\n\n"
-
-                "ПРАВИЛА:\n"
-                "1. Используй только реально существующий контекст.\n"
-                "2. Ничего не выдумывай.\n"
-                "3. Не упоминай несуществующие прошлые события.\n"
-                "4. Если нет хорошей темы — верни ровно NO_INITIATIVE.\n"
-                "5. Если тема есть — напиши короткое естественное "
-                "сообщение Айсель пользователю.\n"
-                "6. Не объясняй, почему ты решила написать.\n"
-                "7. Не говори как бот или оператор.\n"
-                "8. Не начинай с «Привет, как дела?», если для этого "
-                "нет причины.\n"
-            ),
-        },
-    ]
-
-    messages.extend(recent[-20:])
-
-    messages.append(
-        {
-            "role": "user",
-            "content": (
-                "Реши, есть ли сейчас естественная причина "
-                "Айсель самой написать пользователю.\n"
-                "Если нет — ответь ровно: NO_INITIATIVE\n"
-                "Если да — напиши только её сообщение."
-            ),
-        }
+    ensure_user(
+        user.id,
+        user.username,
     )
 
-    response = client.chat.completions.create(
-        model=AI_MODEL,
-        messages=messages,
-    )
+    try:
 
-    result = (
-        response.choices[0]
-        .message.content
-        or ""
-    ).strip()
+        answer = generate_initiative(
+            user.id
+        )
 
-    if result == "NO_INITIATIVE":
-        return ""
+        if not answer:
 
-    return result
+            await update.message.reply_text(
+                "Сегодня я пока ничего интересного "
+                "сама не придумала 🙂"
+            )
+
+            return
+
+        save_initiative(
+            user.id
+        )
+
+        save_message(
+            user.id,
+            "assistant",
+            answer,
+        )
+
+        await update.message.reply_text(
+            answer
+        )
+
+    except Exception:
+
+        logger.exception(
+            "Initiative failed"
+        )
+
+        await update.message.reply_text(
+            "Я хотела проявить инициативу, "
+            "но сама себя запутала 😏"
+        )
+
 
 # ============================================================
 # /START
@@ -1323,4 +1460,99 @@ async def photo_handler(
 
 # ============================================================
 # ERROR HANDLER
-# =================================================
+# ============================================================
+
+async def error_handler(
+    update,
+    context,
+):
+
+    logger.exception(
+        "Unhandled exception",
+        exc_info=context.error,
+    )
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    init_database()
+
+    init_visual_context()
+
+    init_initiative()
+
+    application = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
+        .build()
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "start",
+            start_command,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "memory",
+            memory_command,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "clear",
+            clear_command,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "initiative",
+            initiative_command,
+        )
+    )
+
+    application.add_handler(
+        MessageHandler(
+            filters.VOICE,
+            voice_handler,
+        )
+    )
+
+    application.add_handler(
+        MessageHandler(
+            filters.PHOTO,
+            photo_handler,
+        )
+    )
+
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT
+            & ~filters.COMMAND,
+            text_handler,
+        )
+    )
+
+    application.add_error_handler(
+        error_handler
+    )
+
+    logger.info(
+        "Aisele bot started"
+    )
+
+    application.run_polling(
+        allowed_updates=Update.ALL_TYPES
+    )
+
+
+if __name__ == "__main__":
+    main()
