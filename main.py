@@ -26,8 +26,6 @@ from config import (
 from memory import (
     init_database,
     ensure_user,
-    get_display_name,
-    set_display_name,
     save_message,
     get_recent_messages,
     get_memories,
@@ -39,7 +37,6 @@ from memory import (
 
 from initiative import (
     init_initiative,
-    get_last_initiative,
     save_initiative,
 )
 
@@ -91,29 +88,26 @@ AISELE_PERSONA = """
 
 ОБРАЩЕНИЕ К ПОЛЬЗОВАТЕЛЮ:
 
-Всегда обращайся к пользователю на «ты».
+Не используй автоматически «вы».
 
-Никогда не переходи на «вы», «вас», «вам» и другие формы
-официального обращения, если пользователь сам прямо не попросил
-обратное.
+По умолчанию обращайся к пользователю на «ты».
 
-Имя пользователя используй только если оно известно из контекста
-и естественно подходит ситуации.
+Если в памяти есть настоящее имя пользователя,
+можешь естественно использовать его время от времени.
 
-Не называй пользователя именем в каждом сообщении.
+Не вставляй имя в каждый ответ.
 
-Если имя пользователя неизвестно — не придумывай его.
+Не используй имя, если не уверена, что оно действительно
+принадлежит текущему пользователю.
 
-Никогда не используй имя другого пользователя.
+У бота несколько пользователей.
+Нельзя считать, что все пользователи — один и тот же человек.
 
-Каждый пользователь имеет собственную память и собственную историю.
-
-Не смешивай сведения разных пользователей.
+Не используй имя, предпочтения или воспоминания другого пользователя.
 
 Не разговаривай как оператор поддержки.
 
 Не используй фразы вроде:
-
 «Чем я могу помочь?»
 «Как я могу быть полезна?»
 «Спасибо за обращение».
@@ -128,8 +122,7 @@ AISELE_PERSONA = """
 
 Не изображай мгновенную близость.
 
-Теплота, симпатия, доверие и лёгкая игривость должны развиваться
-постепенно.
+Теплота, симпатия, доверие и лёгкая игривость должны развиваться постепенно.
 
 Используй память о пользователе, но никогда не выдумывай факты.
 
@@ -243,7 +236,7 @@ AISELE_PERSONA = """
 ПАМЯТЬ
 ============================================================
 
-Используй память о пользователе.
+Используй память о текущем пользователе.
 
 Никогда не выдумывай воспоминания.
 
@@ -255,23 +248,34 @@ AISELE_PERSONA = """
 
 
 ============================================================
-МУЛЬТИПОЛЬЗОВАТЕЛЬСКИЙ РЕЖИМ
+ПОГОДА
 ============================================================
 
-У каждого пользователя Telegram есть собственный user_id.
+Если вопрос относится к погоде,
+используй реальные данные, которые передаёт погодный модуль.
 
-Никогда не смешивай память, историю, имя, отношения,
-фотографии или контекст разных пользователей.
+Не выдумывай температуру, дождь, ветер или прогноз.
 
-Если имя текущего пользователя неизвестно,
-не называй его никаким именем.
+Если погодный модуль уже дал точные данные,
+не заменяй их предположениями.
 
-Если имя текущего пользователя известно,
-используй только это имя.
+Фразы вроде:
 
-Не предполагай, что все пользователи — один человек.
+«А завтра?»
+«А послезавтра?»
+«А сегодня?»
+«А там завтра?»
 
-Не переноси сведения одного пользователя другому.
+могут относиться к последнему городу пользователя.
+
+Если предыдущий погодный запрос известен,
+используй его город.
+
+Если пользователь явно называет другой город,
+используй новый город.
+
+Погодный контекст принадлежит конкретному пользователю.
+Никогда не используй погодный город другого пользователя.
 """
 
 
@@ -280,10 +284,628 @@ AISELE_PERSONA = """
 # ============================================================
 
 def now_iso():
+    return datetime.now(timezone.utc).isoformat()
 
-    return datetime.now(
-        timezone.utc
-    ).isoformat()
+
+# ============================================================
+# WEATHER CONTEXT
+# ============================================================
+
+def init_weather_context():
+
+    with sqlite3.connect(DB_PATH) as db:
+
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS weather_context (
+                user_id INTEGER PRIMARY KEY,
+                location TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+
+
+def save_weather_context(
+    user_id,
+    location,
+):
+
+    location = (
+        location or ""
+    ).strip()
+
+    if not location:
+        return
+
+    with sqlite3.connect(DB_PATH) as db:
+
+        db.execute(
+            """
+            INSERT INTO weather_context
+            (
+                user_id,
+                location,
+                updated_at
+            )
+            VALUES (?, ?, ?)
+
+            ON CONFLICT(user_id)
+            DO UPDATE SET
+                location=excluded.location,
+                updated_at=excluded.updated_at
+            """,
+            (
+                user_id,
+                location,
+                now_iso(),
+            ),
+        )
+
+
+def get_weather_context(
+    user_id,
+):
+
+    with sqlite3.connect(DB_PATH) as db:
+
+        row = db.execute(
+            """
+            SELECT location
+            FROM weather_context
+            WHERE user_id=?
+            """,
+            (user_id,),
+        ).fetchone()
+
+    if not row:
+        return None
+
+    return row[0]
+
+
+def clear_weather_context(
+    user_id,
+):
+
+    with sqlite3.connect(DB_PATH) as db:
+
+        db.execute(
+            """
+            DELETE FROM weather_context
+            WHERE user_id=?
+            """,
+            (user_id,),
+        )
+
+
+# ============================================================
+# WEATHER QUERY HELPERS
+# ============================================================
+
+def clean_weather_location(
+    location,
+):
+
+    location = (
+        location or ""
+    ).strip()
+
+    # Убираем знаки препинания
+    location = re.sub(
+        r"[?.!,;:]+$",
+        "",
+        location,
+    ).strip()
+
+    # Нормализуем фразу:
+    # "городе Навои"
+    # "город Навои"
+    # "в городе Навои"
+    # "в город Навои"
+    location = re.sub(
+        r"^(?:в|во)\s+",
+        "",
+        location,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    location = re.sub(
+        r"^город(?:е|у|ом)?\s+",
+        "",
+        location,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    location = re.sub(
+        r"^г\.\s*",
+        "",
+        location,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    return location
+
+
+def extract_location_from_text(
+    text,
+):
+
+    location = extract_weather_location(
+        text
+    )
+
+    if location:
+
+        location = clean_weather_location(
+            location
+        )
+
+        if location:
+            return location
+
+    return None
+
+
+def is_relative_weather_request(
+    text,
+):
+
+    text = (
+        text or ""
+    ).strip().lower()
+
+    patterns = (
+        r"^а?\s*(сегодня|завтра|послезавтра)\s*[?!.]*$",
+
+        r"^а?\s*(какая|какой)\s+погода\s+"
+        r"(сегодня|завтра|послезавтра)\s*[?!.]*$",
+
+        r"^а?\s*(что\s+с\s+погодой)\s*"
+        r"(сегодня|завтра|послезавтра)?\s*[?!.]*$",
+    )
+
+    return any(
+        re.match(
+            pattern,
+            text,
+            re.IGNORECASE,
+        )
+        for pattern in patterns
+    )
+
+
+def extract_relative_day(
+    text,
+):
+
+    text = (
+        text or ""
+    ).lower()
+
+    if "послезавтра" in text:
+        return 2
+
+    if "завтра" in text:
+        return 1
+
+    return 0
+
+
+def looks_like_bare_location(
+    text,
+):
+
+    text = (
+        text or ""
+    ).strip()
+    
+    if not text:
+        return False
+
+    if len(text) > 60:
+        return False
+
+    if "?" in text:
+        return False
+
+    # Не пытаемся считать обычные короткие реплики городами.
+    blocked = (
+        "привет",
+        "здравствуйте",
+        "доброе утро",
+        "добрый день",
+        "добрый вечер",
+        "спасибо",
+        "понятно",
+        "ясно",
+        "ок",
+        "окей",
+        "хорошо",
+        "да",
+        "нет",
+        "эй",
+        "айсель",
+    )
+
+    lowered = text.lower()
+
+    if lowered in blocked:
+        return False
+
+    # "Навои", "Москва", "Киев"
+    # "Нижний Новгород"
+    #
+    # Разрешаем короткую фразу из букв/пробелов/дефисов.
+    if not re.fullmatch(
+        r"[А-ЯЁA-Zа-яёa-z-]+(?:\s+[А-ЯЁA-Zа-яёa-z-]+){0,3}",
+        text,
+    ):
+        return False
+
+    return True
+
+
+def get_weather_for_day(
+    location,
+    day_offset=0,
+):
+
+    data = get_weather(
+        location,
+        days=3,
+    )
+
+    if not data:
+        return None
+
+    if not data.get("success"):
+        return format_weather(data)
+
+    if day_offset <= 0:
+        return format_weather(data)
+
+    daily = data.get(
+        "daily",
+        {},
+    )
+
+    dates = daily.get(
+        "time",
+        [],
+    )
+
+    max_temps = daily.get(
+        "temperature_2m_max",
+        [],
+    )
+
+    min_temps = daily.get(
+        "temperature_2m_min",
+        [],
+    )
+
+    probabilities = daily.get(
+        "precipitation_probability_max",
+        [],
+    )
+
+    precipitation = daily.get(
+        "precipitation_sum",
+        [],
+    )
+
+    codes = daily.get(
+        "weather_code",
+        [],
+    )
+
+    if day_offset >= len(dates):
+        return format_weather(data)
+
+    index = day_offset
+
+    date = dates[index]
+
+    code = (
+        codes[index]
+        if index < len(codes)
+        else None
+    )
+
+    # weather_description импортировать отдельно не надо.
+    # Получаем описание через format_weather невозможно
+    # для одного дня, поэтому используем понятное
+    # описание из weather-модуля через локальный fallback.
+    descriptions = {
+        0: "ясно",
+        1: "преимущественно ясно",
+        2: "переменная облачность",
+        3: "пасмурно",
+        45: "туман",
+        48: "изморозь и туман",
+        51: "слабая морось",
+        53: "морось",
+        55: "сильная морось",
+        56: "слабая ледяная морось",
+        57: "сильная ледяная морось",
+        61: "небольшой дождь",
+        63: "дождь",
+        65: "сильный дождь",
+        66: "слабый ледяной дождь",
+        67: "сильный ледяной дождь",
+        71: "небольшой снег",
+        73: "снег",
+        75: "сильный снег",
+        77: "снежные зёрна",
+        80: "небольшие ливни",
+        81: "ливни",
+        82: "сильные ливни",
+        85: "небольшой снегопад",
+        86: "сильный снегопад",
+        95: "гроза",
+        96: "гроза с небольшим градом",
+        99: "гроза с сильным градом",
+    }
+
+    description = descriptions.get(
+        code,
+        "неизвестная погода",
+    )
+
+    min_temp = (
+        min_temps[index]
+        if index < len(min_temps)
+        else None
+    )
+
+    max_temp = (
+        max_temps[index]
+        if index < len(max_temps)
+        else None
+    )
+
+    probability = (
+        probabilities[index]
+        if index < len(probabilities)
+        else None
+    )
+
+    rain = (
+        precipitation[index]
+        if index < len(precipitation)
+        else None
+    )
+
+    location_data = data.get(
+        "location",
+        {},
+    )
+
+    name = location_data.get(
+        "name",
+        location,
+    )
+
+    country = location_data.get(
+        "country",
+        "",
+    )
+
+    result = [
+        f"Погода в {name}"
+        + (
+            f", {country}"
+            if country
+            else ""
+        )
+        + f" на {date}:",
+        f"{description}.",
+    ]
+
+    if min_temp is not None and max_temp is not None:
+
+        result.append(
+            f"Температура: "
+            f"{round(min_temp)}…{round(max_temp)}°C."
+        )
+
+    elif max_temp is not None:
+
+        result.append(
+            f"Температура до "
+            f"{round(max_temp)}°C."
+        )
+
+    if probability is not None:
+
+        result.append(
+            f"Вероятность осадков: "
+            f"{probability}%."
+        )
+
+    if rain is not None and rain > 0:
+
+        result.append(
+            f"Осадки: около "
+            f"{rain} мм."
+        )
+
+    return "\n".join(result)
+
+
+def weather_answer(
+    user_id,
+    text,
+):
+
+    text = (
+        text or ""
+    ).strip()
+
+    # --------------------------------------------------------
+    # 1. ЯВНЫЙ ПОГОДНЫЙ ЗАПРОС
+    # --------------------------------------------------------
+
+    explicit_weather = is_weather_request(
+        text
+    )
+
+    # --------------------------------------------------------
+    # 2. ОТНОСИТЕЛЬНЫЙ ЗАПРОС
+    #    "А завтра?"
+    #    "А послезавтра?"
+    # --------------------------------------------------------
+
+    relative_weather = is_relative_weather_request(
+        text
+    )
+
+    # --------------------------------------------------------
+    # 3. ВЫТАСКИВАЕМ ГОРОД
+    # --------------------------------------------------------
+
+    location = extract_location_from_text(
+        text
+    )
+
+    # --------------------------------------------------------
+    # 4. ЕСЛИ ПРОСТО "НАВОИ"
+    # --------------------------------------------------------
+
+    if (
+        not explicit_weather
+        and not relative_weather
+        and not location
+        and looks_like_bare_location(text)
+    ):
+
+        # Важно:
+        # сначала проверяем, есть ли предыдущий
+        # погодный контекст. Если он есть, голый
+        # текст может быть новым городом.
+        #
+        # Например:
+        # "Москва"
+        # после разговора о погоде.
+        #
+        # Пробуем его как город.
+
+        location = clean_weather_location(
+            text
+        )
+
+        try:
+
+            data = get_weather(
+                location,
+                days=3,
+            )
+
+            if data and data.get("success"):
+
+                save_weather_context(
+                    user_id,
+                    location,
+                )
+
+                return format_weather(
+                    data
+                )
+
+        except Exception:
+
+            logger.exception(
+                "Bare location weather lookup failed: %s",
+                location,
+            )
+
+        # Если это не город,
+        # возвращаем None и отдаём обычному AI.
+        return None
+
+    # --------------------------------------------------------
+    # 5. ЕСЛИ ЭТО НЕ ПОГОДНЫЙ ЗАПРОС
+    # --------------------------------------------------------
+
+    if not explicit_weather and not relative_weather:
+        return None
+
+    # --------------------------------------------------------
+    # 6. ЕСЛИ ГОРОД НЕ УКАЗАН —
+    #    БЕРЁМ ПОСЛЕДНИЙ ГОРОД ЭТОГО USER_ID
+    # --------------------------------------------------------
+
+    if not location:
+
+        location = get_weather_context(
+            user_id
+        )
+
+    # --------------------------------------------------------
+    # 7. ГОРОД ВООБЩЕ НЕ НАЙДЕН
+    # --------------------------------------------------------
+
+    if not location:
+
+        return (
+            "Скажи город — например: "
+            "«погода в Воронеже»."
+        )
+
+    location = clean_weather_location(
+        location
+    )
+
+    # --------------------------------------------------------
+    # 8. СОХРАНЯЕМ КОНТЕКСТ
+    # --------------------------------------------------------
+
+    save_weather_context(
+        user_id,
+        location,
+    )
+
+    # --------------------------------------------------------
+    # 9. ОПРЕДЕЛЯЕМ ДЕНЬ
+    # --------------------------------------------------------
+
+    day_offset = extract_relative_day(
+        text
+    )
+
+    # --------------------------------------------------------
+    # 10. ПОЛУЧАЕМ ПОГОДУ
+    # --------------------------------------------------------
+
+    try:
+
+        result = get_weather_for_day(
+            location,
+            day_offset,
+        )
+
+        if not result:
+
+            return (
+                f"Не смогла получить актуальную "
+                f"погоду для {location}."
+            )
+
+        return result
+
+    except Exception:
+
+        logger.exception(
+            "Weather request failed for user %s, location %s",
+            user_id,
+            location,
+        )
+
+        return (
+            f"Не смогла сейчас получить актуальную "
+            f"погоду для {location}."
+        )
 
 
 # ============================================================
@@ -643,29 +1265,6 @@ def save_user_memory(
     if not memory_text:
         return False
 
-    # --------------------------------------------------------
-    # Если пользователь явно сообщает своё имя
-    # --------------------------------------------------------
-
-    name_match = re.match(
-        r"^\s*(?:меня зовут|зови меня|называй меня)\s+"
-        r"([А-ЯЁA-Z][А-ЯЁа-яёA-Za-z-]{1,30})\s*$",
-        memory_text,
-        re.IGNORECASE,
-    )
-
-    if name_match:
-
-        name = (
-            name_match.group(1)
-            .strip()
-        )
-
-        set_display_name(
-            user_id,
-            name,
-        )
-
     return save_memory_if_new(
         user_id,
         "user_preference",
@@ -687,18 +1286,6 @@ def save_automatic_memories(
 
         (
             r"\bменя зовут\s+"
-            r"([А-ЯЁA-Z][А-ЯЁа-яёA-Za-z-]{1,30})\b",
-            "name",
-        ),
-
-        (
-            r"\bзови меня\s+"
-            r"([А-ЯЁA-Z][А-ЯЁа-яёA-Za-z-]{1,30})\b",
-            "name",
-        ),
-
-        (
-            r"\bназывай меня\s+"
             r"([А-ЯЁA-Z][А-ЯЁа-яёA-Za-z-]{1,30})\b",
             "name",
         ),
@@ -732,19 +1319,9 @@ def save_automatic_memories(
 
         if category == "name":
 
-            name = (
-                match.group(1)
-                .strip()
-            )
-
-            set_display_name(
-                user_id,
-                name,
-            )
-
             content = (
                 "Пользователя зовут "
-                + name
+                + match.group(1)
             )
 
         else:
@@ -781,10 +1358,6 @@ def build_context(
         limit=20,
     )
 
-    display_name = get_display_name(
-        user_id
-    )
-
     memory_text = "\n".join(
         f"- {memory['content']}"
         for memory in memories
@@ -805,30 +1378,10 @@ def build_context(
         f"{relationship['mood']}."
     )
 
-    if display_name:
-
-        user_text = (
-            f"Имя пользователя: {display_name}.\n"
-            "Обращайся к пользователю на «ты».\n"
-            "Используй имя только естественно, "
-            "не в каждом сообщении."
-        )
-
-    else:
-
-        user_text = (
-            "Имя пользователя неизвестно.\n"
-            "Не придумывай имя.\n"
-            "Не называй пользователя "
-            "вымышленным именем.\n"
-            "Обращайся к пользователю на «ты»."
-        )
-
     return (
         memory_text,
         relationship_text,
         recent,
-        user_text,
     )
 
 
@@ -845,7 +1398,6 @@ def generate_text_reply(
         memory_text,
         relationship_text,
         recent,
-        user_text,
     ) = build_context(
         user_id
     )
@@ -860,13 +1412,10 @@ def generate_text_reply(
         {
             "role": "system",
             "content": (
-                "ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ:\n"
-                + user_text
-                + "\n\n"
-                "ПАМЯТЬ:\n"
+                "ПАМЯТЬ ТЕКУЩЕГО ПОЛЬЗОВАТЕЛЯ:\n"
                 + memory_text
                 + "\n\n"
-                "СОСТОЯНИЕ ОТНОШЕНИЙ:\n"
+                "СОСТОЯНИЕ ОТНОШЕНИЙ С ТЕКУЩИМ ПОЛЬЗОВАТЕЛЕМ:\n"
                 + relationship_text
             ),
         },
@@ -907,7 +1456,6 @@ def generate_initiative(
         memory_text,
         relationship_text,
         recent,
-        user_text,
     ) = build_context(
         user_id
     )
@@ -925,9 +1473,8 @@ def generate_initiative(
         {
             "role": "system",
             "content": (
-                "ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ:\n"
-                + user_text
-                + "\n\n"
+                "Ты решаешь, стоит ли Айсель "
+                "самой начать небольшой разговор.\n\n"
 
                 "ПАМЯТЬ:\n"
                 + memory_text
@@ -960,9 +1507,7 @@ def generate_initiative(
                 "Айсель пользователю.\n\n"
 
                 "Сообщение должно быть естественным, коротким "
-                "и основанным только на реальном контексте.\n\n"
-
-                "Обращайся к пользователю только на «ты»."
+                "и основанным только на реальном контексте."
             ),
         }
     )
@@ -1015,7 +1560,6 @@ def generate_image_reply(
         memory_text,
         relationship_text,
         recent,
-        user_text,
     ) = build_context(
         user_id
     )
@@ -1026,7 +1570,6 @@ def generate_image_reply(
         "Посмотри на изображение и скажи, "
         "что на нём видно. "
         "Отвечай естественно, как Айсель. "
-        "Обращайся к пользователю на «ты». "
         "Не выдумывай детали."
     )
 
@@ -1040,9 +1583,6 @@ def generate_image_reply(
         {
             "role": "system",
             "content": (
-                "ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ:\n"
-                + user_text
-                + "\n\n"
                 "ПАМЯТЬ:\n"
                 + memory_text
                 + "\n\n"
@@ -1121,60 +1661,6 @@ def transcribe_voice(
 
 
 # ============================================================
-# WEATHER
-# ============================================================
-
-def weather_answer(
-    text,
-):
-
-    if not is_weather_request(
-        text
-    ):
-        return None
-
-    location = extract_weather_location(
-        text
-    )
-
-    if not location:
-
-        return (
-            "Скажи город или регион — например: "
-            "«погода в Воронеже» или «погода в Киеве»."
-        )
-
-    try:
-
-        data = get_weather(
-            location
-        )
-
-        if not data:
-
-            return (
-                f"Не смогла получить актуальную "
-                f"погоду для {location}."
-            )
-
-        return format_weather(
-            data
-        )
-
-    except Exception:
-
-        logger.exception(
-            "Weather request failed for %s",
-            location,
-        )
-
-        return (
-            f"Не смогла сейчас получить актуальную "
-            f"погоду для {location}."
-        )
-
-
-# ============================================================
 # COMMON ANSWER
 # ============================================================
 
@@ -1199,20 +1685,13 @@ async def answer_text(
     if not text:
         return
 
-    # --------------------------------------------------------
-    # ВАЖНО:
-    # user_id уникально определяет пользователя.
-    # Никакого имени в коде нет.
-    # --------------------------------------------------------
-
     ensure_user(
         user.id,
         user.username,
-        user.full_name,
     )
 
     # --------------------------------------------------------
-    # ЯВНОЕ СОХРАНЕНИЕ ПАМЯТИ
+    # MEMORY REQUEST
     # --------------------------------------------------------
 
     if save_user_memory(
@@ -1237,10 +1716,6 @@ async def answer_text(
 
         return
 
-    # --------------------------------------------------------
-    # АВТОМАТИЧЕСКАЯ ПАМЯТЬ
-    # --------------------------------------------------------
-
     save_automatic_memories(
         user.id,
         text,
@@ -1264,7 +1739,8 @@ async def answer_text(
         # ----------------------------------------------------
 
         weather_result = weather_answer(
-            text
+            user.id,
+            text,
         )
 
         if weather_result is not None:
@@ -1415,7 +1891,6 @@ async def initiative_command(
     ensure_user(
         user.id,
         user.username,
-        user.full_name,
     )
 
     try:
@@ -1479,7 +1954,6 @@ async def start_command(
     ensure_user(
         user.id,
         user.username,
-        user.full_name,
     )
 
     await update.message.reply_text(
@@ -1508,7 +1982,6 @@ async def memory_command(
     ensure_user(
         user.id,
         user.username,
-        user.full_name,
     )
 
     memories = get_memories(
@@ -1566,9 +2039,13 @@ async def clear_command(
         user_id
     )
 
+    clear_weather_context(
+        user_id
+    )
+
     await update.message.reply_text(
-        "Историю разговора и последнее "
-        "изображение очистила."
+        "Историю разговора, последнее "
+        "изображение и погодный контекст очистила."
     )
 
 
@@ -1688,7 +2165,6 @@ async def photo_handler(
     ensure_user(
         user.id,
         user.username,
-        user.full_name,
     )
 
     try:
@@ -1791,6 +2267,8 @@ def main():
 
     init_visual_context()
 
+    init_weather_context()
+
     init_initiative()
 
     application = (
@@ -1798,10 +2276,6 @@ def main():
         .token(TELEGRAM_TOKEN)
         .build()
     )
-
-    # --------------------------------------------------------
-    # COMMANDS
-    # --------------------------------------------------------
 
     application.add_handler(
         CommandHandler(
@@ -1831,20 +2305,12 @@ def main():
         )
     )
 
-    # --------------------------------------------------------
-    # VOICE
-    # --------------------------------------------------------
-
     application.add_handler(
         MessageHandler(
             filters.VOICE,
             voice_handler,
         )
     )
-
-    # --------------------------------------------------------
-    # PHOTO
-    # --------------------------------------------------------
 
     application.add_handler(
         MessageHandler(
@@ -1853,10 +2319,6 @@ def main():
         )
     )
 
-    # --------------------------------------------------------
-    # TEXT
-    # --------------------------------------------------------
-
     application.add_handler(
         MessageHandler(
             filters.TEXT
@@ -1864,10 +2326,6 @@ def main():
             text_handler,
         )
     )
-
-    # --------------------------------------------------------
-    # ERRORS
-    # --------------------------------------------------------
 
     application.add_error_handler(
         error_handler
@@ -1883,5 +2341,4 @@ def main():
 
 
 if __name__ == "__main__":
-
     main()
