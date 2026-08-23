@@ -863,7 +863,7 @@ def generate_image_reply(
 
 
     
-        memory_text,
+        memory_text=None,
         relationship_text,
         recent,
     ) = build_context(user_id)
