@@ -12,10 +12,17 @@ from config import TELEGRAM_TOKEN
 from main import (
     init_database,
     init_visual_context,
+    init_weather_context,
     start_command,
     memory_command,
     clear_command,
     photo_handler,
+    initiative_command,
+    error_handler,
+)
+
+from initiative import (
+    init_initiative,
 )
 
 from voice import (
@@ -35,6 +42,10 @@ def main():
     init_database()
 
     init_visual_context()
+
+    init_weather_context()
+
+    init_initiative()
 
     application = (
         Application
@@ -65,6 +76,13 @@ def main():
         CommandHandler(
             "clear",
             clear_command,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "initiative",
+            initiative_command,
         )
     )
 
@@ -99,6 +117,14 @@ def main():
             filters.TEXT & ~filters.COMMAND,
             smart_text_handler,
         )
+    )
+
+    # --------------------------------------------------------
+    # ERRORS
+    # --------------------------------------------------------
+
+    application.add_error_handler(
+        error_handler
     )
 
     logging.info(
