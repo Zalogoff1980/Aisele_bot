@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-DB_PATH = Path("aisele.db")
+from config import DB_PATH as _CONFIG_DB_PATH
+DB_PATH = Path(_CONFIG_DB_PATH)
 
 
 # ============================================================
