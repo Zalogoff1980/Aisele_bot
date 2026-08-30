@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # DATABASE
 # ============================================================
 
-DB_PATH = "aisele.db"
+from config import DB_PATH
 
 
 def init_voice_database():
