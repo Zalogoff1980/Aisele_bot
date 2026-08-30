@@ -22,6 +22,7 @@ from config import (
     TELEGRAM_TOKEN,
     OPENAI_API_KEY,
     AI_MODEL,
+    DB_PATH
 )
 
 from memory import (
@@ -58,7 +59,7 @@ from city_image import (
 )
 
 
-DB_PATH = "aisele.db"
+
 
 
 # ============================================================
