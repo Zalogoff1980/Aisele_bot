@@ -15,3 +15,5 @@ if not TELEGRAM_TOKEN:
 
 if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY is not configured")
+
+DB_PATH = os.getenv("DB_PATH", "aisele.db")
